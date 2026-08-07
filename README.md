@@ -154,6 +154,17 @@ from source, so only the four bundle directories are ever rebuilt.
 ## Credits and licence
 
 Originally written by Serkan Özal and contributors at Thundra / Runforesight /
-Catchpoint. This fork keeps the original MIT licence and copyright, see
-[LICENSE.md](LICENSE.md). See [CHANGELOG.md](CHANGELOG.md) for what has changed
-since the fork.
+Catchpoint, and licensed under the Apache License 2.0 (Copyright 2022 Thundra,
+Inc.). This fork keeps that licence and copyright unchanged, see
+[LICENSE.md](LICENSE.md).
+
+Upstream's `package.json` declared `MIT` while its `LICENSE` file was Apache 2.0
+and contained no MIT text. The authors confirmed Apache 2.0 was the intent in
+[catchpoint/workflow-telemetry-action#18](https://github.com/catchpoint/workflow-telemetry-action/issues/18),
+so this fork corrects the metadata to `Apache-2.0`. That is a fix to a wrong
+declaration, not a relicence: a fork cannot change the licence of code it did
+not write.
+
+As required by section 4(b) of the licence, this is a modified version of the
+original work. [CHANGELOG.md](CHANGELOG.md) lists the changes made since the
+fork point.

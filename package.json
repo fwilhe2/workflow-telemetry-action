@@ -30,7 +30,7 @@
     "ci-cd"
   ],
   "author": "Florian Wilhelm",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@actions/core": "^3.0.1",
     "@actions/exec": "^3.0.0",

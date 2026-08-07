@@ -1,0 +1,43 @@
+# See: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+#
+# Note: `dist/` is committed and must match `src/`, and Dependabot does not
+# rebuild it. The "Check Transpiled JavaScript" workflow will therefore fail on
+# any PR that changes a bundled dependency until `npm run all` is run and the
+# rebuilt `dist/` is pushed to the branch. Updates are grouped to keep that
+# chore down to a handful of PRs.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Everything that ends up inside the shipped bundles.
+      production-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      # Toolchain only; these never reach dist/.
+      development-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # typescript-eslint requires typescript <6.1, so a major bump breaks
+      # linting. Revisit when typescript-eslint supports the next major.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
