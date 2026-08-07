@@ -1,6 +1,6 @@
 name: 'Workflow Telemetry'
 description: 'Workflow Telemetry'
-author: 'Serkan Özal <serkan@thundra.io>'
+author: 'Florian Wilhelm'
 inputs:
   github_token:
     description: 'GitHub API Access Token'

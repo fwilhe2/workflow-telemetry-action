@@ -1,77 +1,97 @@
-name: release-workflow-telemetry
+# Tags and releases whatever version is currently in package.json, and moves
+# the major tag (v3) that users reference with `uses: ...@v3`.
+name: Release
 
 on:
   workflow_dispatch:
     inputs:
-      version_scale:
-        type: choice
-        description: Version Scale
-        default: patch
-        options:
-          - patch
-          - minor
-          - major
+      dry_run:
+        description: Resolve the version and check the tag, but publish nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  update-version:
+  release:
+    name: Tag and release
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          token: ${{ secrets.FORESIGHT_GITHUB_TOKEN }}
-      - name: Configure Git User
-        run: |
-          git config --global user.email "action@github.com"
-          git config --global user.name "GitHub Action"
-      - name: Use Node.js
+          fetch-depth: 0
+
+      - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
-          registry-url: https://registry.npmjs.org
-      - run: npm version ${{ github.event.inputs.version_scale }}
-      - run: |
-          git add .
-          git diff-index --quiet HEAD || git commit -m 'Increase package.json version [skip ci]'
-          git push origin HEAD
+          cache: npm
 
-  create-release:
-    runs-on: ubuntu-latest
-    needs: [update-version]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # ref is required
-          # see:
-          #   - https://github.com/actions/checkout/issues/439
-          #   - https://github.com/actions/checkout/issues/461
-          ref: ${{ github.ref }}
-      - name: Set new package version
-        id: package-version
+      - name: Install Dependencies
+        run: npm ci
+
+      # A release must never ship a dist/ that does not match src/.
+      - name: Verify dist/ is up to date
         run: |
-          export PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          echo $PACKAGE_VERSION
-          if [[ -z $PACKAGE_VERSION ]]
-          then
-            echo "Couldn't get variable PACKAGE_VERSION."
+          npm run package
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            echo "::error::dist/ is out of date, run 'npm run all' and commit"
+            git --no-pager diff --stat dist/
             exit 1
           fi
 
-          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
-      - name: Create a GitHub release
+      - name: Test
+        run: |
+          npm run ci-test
+          npm run smoke-test
+
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ -z "$version" ]; then
+            echo "::error::could not read version from package.json"
+            exit 1
+          fi
+          echo "version=v$version" >>"$GITHUB_OUTPUT"
+          echo "major=v${version%%.*}" >>"$GITHUB_OUTPUT"
+          echo "Releasing v$version (major tag v${version%%.*})"
+
+      - name: Check the tag is free
+        run: |
+          if git ls-remote --exit-code --tags origin \
+              "refs/tags/${{ steps.version.outputs.version }}" >/dev/null; then
+            echo "::error::tag ${{ steps.version.outputs.version }} already exists, bump the version in package.json"
+            exit 1
+          fi
+
+      - name: Tag
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.version }}" \
+            -m "${{ steps.version.outputs.version }}"
+          # The major tag moves to each new release.
+          git tag -f "${{ steps.version.outputs.major }}" \
+            -m "${{ steps.version.outputs.major }}"
+          git push origin "${{ steps.version.outputs.version }}"
+          git push -f origin "${{ steps.version.outputs.major }}"
+
+      - name: Create the GitHub release
+        if: ${{ !inputs.dry_run }}
         uses: actions/github-script@v9
         with:
-          github-token: ${{ secrets.FORESIGHT_GITHUB_TOKEN }}
           script: |
-            try {
-              const response = await github.rest.repos.createRelease({
-                draft: false,
-                generate_release_notes: true,
-                name: `v${{ env.PACKAGE_VERSION }}`,
-                owner: context.repo.owner,
-                prerelease: false,
-                repo: context.repo.repo,
-                tag_name: `v${{ env.PACKAGE_VERSION }}`
-              });
-            } catch (error) {
-              core.setFailed(error.message);
-            }
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: '${{ steps.version.outputs.version }}',
+              name: '${{ steps.version.outputs.version }}',
+              generate_release_notes: true,
+              draft: false,
+              prerelease: false
+            })

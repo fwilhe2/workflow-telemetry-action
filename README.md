@@ -1,5 +1,19 @@
 # workflow-telemetry-action
 
+> **Status: hard fork, maintained for my own use.** This is a hard fork of
+> [catchpoint/workflow-telemetry-action](https://github.com/catchpoint/workflow-telemetry-action),
+> which is dead: no releases in years, and issues and pull requests piling up
+> unanswered. By the time of this fork the action had stopped working in several
+> ways on current runners - the chart backend it called had been shut down, and
+> process tracing had silently switched itself off.
+>
+> I forked it because I want to use it. It is maintained on a best-effort basis,
+> for my own purposes, with no promise of support or stability. Issues and pull
+> requests are welcome but may sit. If you depend on this, pin a tag.
+>
+> Diverged from upstream at
+> [`f974e0c`](https://github.com/catchpoint/workflow-telemetry-action/commit/f974e0c).
+
 A GitHub Action to track and monitor the
 
 - workflow runs, jobs and steps
@@ -79,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Collect Workflow Telemetry
-        uses: catchpoint/workflow-telemetry-action@v2
+        uses: fwilhe2/workflow-telemetry-action@v3
 ```
 
 ## Configuration
@@ -136,3 +150,10 @@ from source, so only the four bundle directories are ever rebuilt.
 | `dist/post` | `src/post.ts`                | The action's `post` step, reports results  |
 | `dist/sc`   | `src/statCollector.ts`       | Stat collector                             |
 | `dist/scw`  | `src/statCollectorWorker.ts` | Spawned as its own process, serves metrics |
+
+## Credits and licence
+
+Originally written by Serkan Özal and contributors at Thundra / Runforesight /
+Catchpoint. This fork keeps the original MIT licence and copyright, see
+[LICENSE.md](LICENSE.md). See [CHANGELOG.md](CHANGELOG.md) for what has changed
+since the fork.
