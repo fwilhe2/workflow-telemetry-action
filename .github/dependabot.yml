@@ -27,6 +27,15 @@ updates:
           - minor
           - patch
     ignore:
+      # @types/node must describe the runtime the action actually runs on,
+      # which action.yml pins via `runs.using: nodeNN`. A newer major would
+      # type-check APIs that do not exist at run time. This ignore holds it at
+      # whatever major package.json currently has, so it follows the runtime
+      # automatically when the action is moved to a new Node version.
+      # `npm run check:node-version` enforces that they stay in step.
+      - dependency-name: '@types/node'
+        update-types:
+          - version-update:semver-major
       # typescript-eslint requires typescript <6.1, so a major bump breaks
       # linting. Revisit when typescript-eslint supports the next major.
       - dependency-name: typescript

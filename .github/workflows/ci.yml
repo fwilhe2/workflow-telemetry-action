@@ -41,6 +41,10 @@ jobs:
         id: npm-lint
         run: npm run lint
 
+      - name: Check the Node version is declared consistently
+        id: npm-check-node-version
+        run: npm run check:node-version
+
       - name: Test
         id: npm-ci-test
         run: npm run ci-test

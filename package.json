@@ -14,7 +14,8 @@
     "test": "NODE_OPTIONS=--experimental-vm-modules NODE_NO_WARNINGS=1 npx jest",
     "ci-test": "NODE_OPTIONS=--experimental-vm-modules NODE_NO_WARNINGS=1 npx jest",
     "smoke-test": "tests/smoke-test.sh",
-    "all": "npm run format:write && npm run lint && npm run test && npm run package && npm run smoke-test"
+    "all": "npm run format:write && npm run lint && npm run check:node-version && npm run test && npm run package && npm run smoke-test",
+    "check:node-version": "node script/check-node-version.mjs"
   },
   "repository": {
     "type": "git",

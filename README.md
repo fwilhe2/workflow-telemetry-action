@@ -148,18 +148,47 @@ npm run all
 `npm run all` formats, lints, runs the unit tests, rebuilds `dist/` and then
 smoke tests the bundles. The individual steps are:
 
-| Script                 | What it does                                                       |
-| ---------------------- | ------------------------------------------------------------------ |
-| `npm run lint`         | ESLint over the whole repo                                         |
-| `npm test`             | Jest unit tests in `__tests__/`                                    |
-| `npm run package`      | Rebuilds the four bundles in `dist/`                               |
-| `npm run smoke-test`   | Loads the built bundles and exercises the stat collector over HTTP |
-| `npm run format:write` | Formats with Prettier                                              |
+| Script                       | What it does                                                       |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `npm run lint`               | ESLint over the whole repo                                         |
+| `npm run check:node-version` | Asserts the Node version is declared consistently                  |
+| `npm test`                   | Jest unit tests in `__tests__/`                                    |
+| `npm run package`            | Rebuilds the four bundles in `dist/`                               |
+| `npm run smoke-test`         | Loads the built bundles and exercises the stat collector over HTTP |
+| `npm run format:write`       | Formats with Prettier                                              |
 
 `dist/` is committed, so **rebuild and commit it with every source change** —
 the `Check Transpiled JavaScript` workflow fails when it drifts from `src/`.
 Note that `dist/proc-tracer/` holds prebuilt binaries that are not generated
 from source, so only the four bundle directories are ever rebuilt.
+
+### Moving to a new Node version
+
+The Node major version the action runs on is written down in four places, and
+they must agree:
+
+| File            | Field                             |
+| --------------- | --------------------------------- |
+| `action.yml`    | `runs.using: nodeNN`              |
+| `.node-version` | the version CI and you build with |
+| `package.json`  | `engines.node`                    |
+| `package.json`  | `devDependencies.@types/node`     |
+
+`@types/node` matters most: if it describes a newer runtime than the action
+actually runs on, TypeScript accepts APIs that are missing at run time. So
+Dependabot is told to hold `@types/node` at its current major
+(`.github/dependabot.yml`); that ignore follows `package.json`, so it tracks the
+runtime automatically rather than naming a version of its own.
+
+To move to a new Node version, edit all four together, then:
+
+```bash
+npm install --save-dev @types/node@<new major>
+npm run all
+```
+
+`npm run check:node-version` (part of `npm run all`, and a CI step) fails if any
+of them drift apart, or if the Dependabot guard is removed.
 
 ### Why the bundles are split
 
