@@ -4,14 +4,12 @@ export type WorkflowJobType = components['schemas']['job']
 
 export interface CPUStats {
   readonly time: number
-  readonly totalLoad: number
   readonly userLoad: number
   readonly systemLoad: number
 }
 
 export interface MemoryStats {
   readonly time: number
-  readonly totalMemoryMb: number
   readonly activeMemoryMb: number
   readonly availableMemoryMb: number
 }
@@ -83,7 +81,6 @@ export interface CompletedCommand {
 
 export interface ProcEventParseOptions {
   readonly minDuration: number
-  readonly traceSystemProcesses: boolean
   /** Anchors forkstat's time-only stamps to a date. Defaults to now. */
   readonly startedAt?: Date
 }

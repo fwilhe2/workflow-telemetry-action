@@ -28453,6 +28453,9 @@ async function start$2() {
     }
 }
 
+// The worker reads the same variable, and inherits this process's environment,
+// so the two cannot disagree about where the stat server lives.
+parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || '') || 7777;
 ///////////////////////////
 async function start$1() {
     info(`Starting stat collector ...`);

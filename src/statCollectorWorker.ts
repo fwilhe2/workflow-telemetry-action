@@ -12,9 +12,9 @@ import {
 const STATS_FREQ: number =
   parseInt(process.env.WORKFLOW_TELEMETRY_STAT_FREQ || '') || 5000
 const SERVER_HOST = 'localhost'
-// TODO
-// It is better to find an available/free port automatically and use it.
-// Then the post script (`post.ts`) needs to know the selected port.
+// Must agree with `statCollector`, which reads the same variable and passes its
+// environment on when spawning this process. Overriding it is only really
+// useful to the smoke test, which runs the worker off the default port.
 const SERVER_PORT: number =
   parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || '') || 7777
 
@@ -37,7 +37,6 @@ async function collectCPUStats(
     .then((data: si.Systeminformation.CurrentLoadData) => {
       const cpuStats: CPUStats = {
         time: statTime,
-        totalLoad: data.currentLoad,
         userLoad: data.currentLoadUser,
         systemLoad: data.currentLoadSystem
       }
@@ -64,7 +63,6 @@ async function collectMemoryStats(
     .then((data: si.Systeminformation.MemData) => {
       const memoryStats: MemoryStats = {
         time: statTime,
-        totalMemoryMb: data.total / 1024 / 1024,
         activeMemoryMb: data.active / 1024 / 1024,
         availableMemoryMb: data.available / 1024 / 1024
       }
@@ -164,9 +162,13 @@ async function collectDiskSizeStats(
 
 ///////////////////////////
 
-async function collectStats(
-  triggeredFromScheduler = true
-): Promise<Array<Promise<void>>> {
+/**
+ * Resolves once every sample has actually been recorded. `/collect` is what the
+ * post step calls to capture the tail of the job, and it must not answer before
+ * that sample is in the histograms, or the collector reads the response and
+ * misses it.
+ */
+async function collectStats(triggeredFromScheduler = true): Promise<void> {
   try {
     const currentTime: number = Date.now()
     const timeInterval: number = statCollectTime
@@ -175,17 +177,18 @@ async function collectStats(
 
     statCollectTime = currentTime
 
-    const promises: Array<Promise<void>> = []
-
-    promises.push(collectCPUStats(statCollectTime, timeInterval))
-    promises.push(collectMemoryStats(statCollectTime, timeInterval))
-    promises.push(collectNetworkStats(statCollectTime, timeInterval))
-    promises.push(collectDiskStats(statCollectTime, timeInterval))
-    promises.push(collectDiskSizeStats(statCollectTime, timeInterval))
-
-    return promises
+    // Each collector handles its own errors, so this never rejects.
+    await Promise.all([
+      collectCPUStats(statCollectTime, timeInterval),
+      collectMemoryStats(statCollectTime, timeInterval),
+      collectNetworkStats(statCollectTime, timeInterval),
+      collectDiskStats(statCollectTime, timeInterval),
+      collectDiskSizeStats(statCollectTime, timeInterval)
+    ])
   } finally {
     if (triggeredFromScheduler) {
+      // Scheduled against an absolute time, so a slow collection shortens the
+      // next wait rather than pushing every later sample back.
       expectedScheduleTime += STATS_FREQ
       setTimeout(collectStats, expectedScheduleTime - Date.now())
     }

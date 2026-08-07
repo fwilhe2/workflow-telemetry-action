@@ -244,11 +244,6 @@ export async function report(
         procTraceMinDuration = minProcDurationVal
       }
     }
-    const procTraceSysEnable: boolean =
-      core.getInput('proc_trace_sys_enable') === 'true'
-
-    const procTraceChartShow: boolean =
-      core.getInput('proc_trace_chart_show') === 'true'
     const procTraceChartMaxCountInput: number = parseInt(
       core.getInput('proc_trace_chart_max_count')
     )
@@ -263,7 +258,6 @@ export async function report(
       procTraceOutFilePath,
       {
         minDuration: procTraceMinDuration,
-        traceSystemProcesses: procTraceSysEnable,
         startedAt: startedAtState ? new Date(startedAtState) : new Date()
       }
     )
@@ -272,48 +266,46 @@ export async function report(
 
     let chartContent = ''
 
-    if (procTraceChartShow) {
-      chartContent = chartContent.concat('gantt', '\n')
-      chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n')
-      chartContent = chartContent.concat('\t', `dateFormat x`, '\n')
-      chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n')
+    chartContent = chartContent.concat('gantt', '\n')
+    chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n')
+    chartContent = chartContent.concat('\t', `dateFormat x`, '\n')
+    chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n')
 
-      const filteredCommands: CompletedCommand[] = [...completedCommands]
-        .sort((a: CompletedCommand, b: CompletedCommand) => {
-          return -(a.duration - b.duration)
-        })
-        .slice(0, procTraceChartMaxCount)
-        .sort((a: CompletedCommand, b: CompletedCommand) => {
-          let result = a.startTime - b.startTime
-          if (result === 0 && a.order && b.order) {
-            result = a.order - b.order
-          }
-          return result
-        })
-
-      for (const command of filteredCommands) {
-        const extraProcessInfo: string | null = getExtraProcessInfo(command)
-        const escapedName = command.name.replace(/:/g, '#colon;')
-        if (extraProcessInfo) {
-          chartContent = chartContent.concat(
-            '\t',
-            `${escapedName} (${extraProcessInfo}) : `
-          )
-        } else {
-          chartContent = chartContent.concat('\t', `${escapedName} : `)
+    const filteredCommands: CompletedCommand[] = [...completedCommands]
+      .sort((a: CompletedCommand, b: CompletedCommand) => {
+        return -(a.duration - b.duration)
+      })
+      .slice(0, procTraceChartMaxCount)
+      .sort((a: CompletedCommand, b: CompletedCommand) => {
+        let result = a.startTime - b.startTime
+        if (result === 0 && a.order && b.order) {
+          result = a.order - b.order
         }
-        if (command.exitCode !== 0) {
-          // to show red
-          chartContent = chartContent.concat('crit, ')
-        }
+        return result
+      })
 
-        const startTime: number = command.startTime
-        const finishTime: number = command.startTime + command.duration
+    for (const command of filteredCommands) {
+      const extraProcessInfo: string | null = getExtraProcessInfo(command)
+      const escapedName = command.name.replace(/:/g, '#colon;')
+      if (extraProcessInfo) {
         chartContent = chartContent.concat(
-          `${Math.min(startTime, finishTime)}, ${finishTime}`,
-          '\n'
+          '\t',
+          `${escapedName} (${extraProcessInfo}) : `
         )
+      } else {
+        chartContent = chartContent.concat('\t', `${escapedName} : `)
       }
+      if (command.exitCode !== 0) {
+        // to show red
+        chartContent = chartContent.concat('crit, ')
+      }
+
+      const startTime: number = command.startTime
+      const finishTime: number = command.startTime + command.duration
+      chartContent = chartContent.concat(
+        `${Math.min(startTime, finishTime)}, ${finishTime}`,
+        '\n'
+      )
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -356,15 +348,14 @@ export async function report(
 
     ///////////////////////////////////////////////////////////////////////////
 
-    const postContentItems: string[] = ['', '### Process Trace']
-    if (procTraceChartShow) {
-      postContentItems.push(
-        '',
-        `#### Top ${procTraceChartMaxCount} processes with highest duration`,
-        '',
-        `\`\`\`mermaid\n${chartContent}\n\`\`\``
-      )
-    }
+    const postContentItems: string[] = [
+      '',
+      '### Process Trace',
+      '',
+      `#### Top ${procTraceChartMaxCount} processes with highest duration`,
+      '',
+      `\`\`\`mermaid\n${chartContent}\n\`\`\``
+    ]
     if (procTraceTableShow) {
       postContentItems.push(
         '',

@@ -1,5 +1,9 @@
-# Tags and releases whatever version is currently in package.json, and moves
-# the major tag (v3) that users reference with `uses: ...@v3`.
+# Tags and releases whatever version is currently in package.json, moves the
+# major tag (v3) that users reference with `uses: ...@v3`, and advances that
+# major's release branch (releases/v3).
+#
+# Run it from the ref you want to release: `main` for the current major, or
+# `releases/vN` to ship a fix for an older one.
 name: Release
 
 on:
@@ -56,9 +60,32 @@ jobs:
             echo "::error::could not read version from package.json"
             exit 1
           fi
-          echo "version=v$version" >>"$GITHUB_OUTPUT"
-          echo "major=v${version%%.*}" >>"$GITHUB_OUTPUT"
-          echo "Releasing v$version (major tag v${version%%.*})"
+          major="v${version%%.*}"
+          # Only the newest release in the repository may be marked "Latest".
+          # Releasing a fix for an older major must not steal that label from a
+          # newer one, so compare against every version tag that already exists.
+          highest=$(
+            {
+              git ls-remote --tags --refs origin | sed 's#.*refs/tags/##' \
+                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+              echo "v$version"
+            } | sort -V | tail -1
+          )
+          if [ "$highest" = "v$version" ]; then
+            make_latest=true
+          else
+            make_latest=false
+          fi
+          {
+            echo "version=v$version"
+            echo "major=$major"
+            echo "branch=releases/$major"
+            echo "make_latest=$make_latest"
+          } >>"$GITHUB_OUTPUT"
+          echo "Releasing v$version from ${{ github.ref_name }}"
+          echo "  major tag:      $major"
+          echo "  release branch: releases/$major"
+          echo "  marked latest:  $make_latest"
 
       - name: Check the tag is free
         run: |
@@ -68,7 +95,27 @@ jobs:
             exit 1
           fi
 
-      - name: Tag
+      # The release branch only ever moves forward. If it holds work that the
+      # ref being released does not, the push would silently drop it, so stop
+      # here instead — before anything has been published.
+      - name: Check the release branch can move forward
+        run: |
+          branch="${{ steps.version.outputs.branch }}"
+          if ! git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
+            echo "$branch does not exist yet and will be created at $(git rev-parse --short HEAD)"
+            exit 0
+          fi
+          git fetch --no-tags origin \
+            "+refs/heads/$branch:refs/remotes/origin/$branch"
+          if git merge-base --is-ancestor "refs/remotes/origin/$branch" HEAD; then
+            echo "$branch will fast-forward to $(git rev-parse --short HEAD)"
+          else
+            echo "::error::$branch has commits that are not in ${{ github.ref_name }}; merge or cherry-pick them first, or release from $branch"
+            git --no-pager log --oneline "HEAD..refs/remotes/origin/$branch"
+            exit 1
+          fi
+
+      - name: Tag and update the release branch
         if: ${{ !inputs.dry_run }}
         run: |
           git config user.name "github-actions[bot]"
@@ -78,6 +125,9 @@ jobs:
           # The major tag moves to each new release.
           git tag -f "${{ steps.version.outputs.major }}" \
             -m "${{ steps.version.outputs.major }}"
+          # Pushed first, and without --force: it is the only push that can
+          # still be rejected, and nothing is published if it is.
+          git push origin "HEAD:refs/heads/${{ steps.version.outputs.branch }}"
           git push origin "${{ steps.version.outputs.version }}"
           git push -f origin "${{ steps.version.outputs.major }}"
 
@@ -93,5 +143,6 @@ jobs:
               name: '${{ steps.version.outputs.version }}',
               generate_release_notes: true,
               draft: false,
-              prerelease: false
+              prerelease: false,
+              make_latest: '${{ steps.version.outputs.make_latest }}'
             })

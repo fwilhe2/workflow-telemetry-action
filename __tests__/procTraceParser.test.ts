@@ -28,13 +28,12 @@ const STARTED_AT = new Date('2024-05-01T18:00:00')
 
 async function parseLines(
   lines: string[],
-  options: { minDuration?: number; traceSystemProcesses?: boolean } = {}
+  options: { minDuration?: number } = {}
 ): Promise<CompletedCommand[]> {
   const file = path.join(tmpDir, `trace-${Math.random().toString(36).slice(2)}`)
   fs.writeFileSync(file, [HEADER, ...lines].join('\n'))
   return parse(file, {
     minDuration: options.minDuration ?? -1,
-    traceSystemProcesses: options.traceSystemProcesses ?? true,
     startedAt: STARTED_AT
   })
 }
@@ -206,19 +205,18 @@ describe('parse', () => {
     expect(commands.map((c) => c.name)).toEqual(['slow'])
   })
 
-  it('ignores common system processes unless asked to trace them', async () => {
-    const lines = [
+  it('traces system processes like any other', async () => {
+    // These used to be dropped against a hardcoded list of names, which could
+    // not tell a build's own `sh` from some wrapper's. Duration is the only
+    // filter now.
+    const commands = await parseLines([
       execLine(1, '/bin/cat file'),
       exitLine(1, 0, '0.010', '/bin/cat file'),
       execLine(2, '/usr/bin/node x'),
       exitLine(2, 0, '0.010', '/usr/bin/node x')
-    ]
+    ])
 
-    const without = await parseLines(lines, { traceSystemProcesses: false })
-    expect(without.map((c) => c.name)).toEqual(['node'])
-
-    const withSys = await parseLines(lines, { traceSystemProcesses: true })
-    expect(withSys.map((c) => c.name).sort()).toEqual(['cat', 'node'])
+    expect(commands.map((c) => c.name).sort()).toEqual(['cat', 'node'])
   })
 
   it('sorts completed commands by start time', async () => {
@@ -269,10 +267,10 @@ describe('parse', () => {
 
   it('keeps a long command line intact', async () => {
     const long = `/bin/echo ${'a'.repeat(30)} ${'b'.repeat(30)} ${'c'.repeat(30)}`
-    const commands = await parseLines(
-      [execLine(1, long), exitLine(1, 0, '0.001', long)],
-      { traceSystemProcesses: true }
-    )
+    const commands = await parseLines([
+      execLine(1, long),
+      exitLine(1, 0, '0.001', long)
+    ])
 
     expect(commands[0].args).toHaveLength(4)
     expect(commands[0].args[3]).toBe('c'.repeat(30))

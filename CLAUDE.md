@@ -134,6 +134,12 @@ throwaway probe workflow to measure it rather than guessing.
 ## Releasing
 
 `npm version`-style bumps are not used. Edit `version` in `package.json`, then
-run the `Release` workflow (it has a `dry_run` input). It refuses to release
-when `dist/` is stale or the tag exists, and moves the `vN` major tag that users
-reference.
+run the `Release` workflow **from the ref being released** (it has a `dry_run`
+input). It refuses to release when `dist/` is stale, the tag exists, or
+`releases/vN` holds commits the released ref does not.
+
+Three refs move: the immutable `vX.Y.Z` tag, the `vN` major tag users reference
+in `uses:`, and the `releases/vN` branch, which is fast-forwarded (never forced)
+so an old major stays maintainable after `main` moves on. The GitHub release is
+marked _Latest_ only when the version really is the highest in the repo, so
+back-porting to an older major does not steal the label from a newer one.

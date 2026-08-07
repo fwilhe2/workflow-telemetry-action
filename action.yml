@@ -26,22 +26,10 @@ inputs:
       applied."
     default: '-1'
     required: false
-  proc_trace_sys_enable:
-    description:
-      "Enables tracing default system processes ('aws', 'cat', 'sed', ...).
-      Defaults to 'false'."
-    default: 'false'
-    required: false
-  proc_trace_chart_show:
-    description:
-      "Enables showing traced processes in trace chart. Defaults to 'true'."
-    default: 'true'
-    required: false
   proc_trace_chart_max_count:
     description:
-      "Maximum number of processes to be shown in trace chart (applicable if
-      `proc_trace_chart_show` input is `true`). Must be a number. Defaults to
-      '100'."
+      "Maximum number of processes to be shown in trace chart. Must be a number.
+      Defaults to '100'."
     default: '100'
     required: false
   proc_trace_table_show:
@@ -60,12 +48,6 @@ inputs:
       "Set to `true` to publish the results as part of the job summary page of
       the workflow run. Defaults to 'true'."
     default: 'true'
-    required: false
-  theme:
-    description:
-      "Deprecated and ignored. Charts are now rendered with Mermaid, which
-      follows the reader's GitHub theme automatically."
-    default: 'light'
     required: false
 
 runs:

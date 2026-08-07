@@ -17,7 +17,10 @@ import {
 } from './interfaces/index.js'
 import * as logger from './logger.js'
 
-const STAT_SERVER_PORT = 7777
+// The worker reads the same variable, and inherits this process's environment,
+// so the two cannot disagree about where the stat server lives.
+const STAT_SERVER_PORT: number =
+  parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || '') || 7777
 
 // Mermaid renders every sample as a tick, so a long job would produce an
 // unreadable chart (and a very large summary). Longer runs are downsampled.
