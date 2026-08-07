@@ -85,3 +85,32 @@ jobs:
           sha256sum /tmp/blob
           rm /tmp/blob
           /bin/sh -c 'exit 3' || true
+
+      # Proves the process tracer is really capturing on this architecture,
+      # rather than silently degrading to an empty trace the way the old
+      # prebuilt binaries did.
+      - name: Verify the process tracer captured something
+        id: verify-trace
+        run: |
+          trace=/tmp/proc-trace.out
+          if [ ! -s "$trace" ]; then
+            echo "::error::process trace $trace is missing or empty"
+            exit 1
+          fi
+          echo "trace lines: $(wc -l <"$trace")"
+          for event in fork exec exit; do
+            n=$(grep -c " $event " "$trace" || true)
+            echo "$event events: $n"
+            if [ "$n" -eq 0 ]; then
+              echo "::error::no $event events captured"
+              exit 1
+            fi
+          done
+          echo "--- sample ---"
+          grep " exec \| exit " "$trace" | head -5
+          # The workload above must show up in the trace.
+          if ! grep -q "sha256sum" "$trace"; then
+            echo "::error::workload command not found in trace"
+            exit 1
+          fi
+          echo "workload commands found in trace"
