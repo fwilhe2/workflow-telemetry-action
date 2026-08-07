@@ -53,14 +53,26 @@ async function ensureForkstat(): Promise<string | null> {
 
   try {
     logger.info('Installing forkstat ...')
-    await execFileAsync('sudo', ['apt-get', 'update', '-qq'], {
-      timeout: 120000
-    })
-    await execFileAsync(
-      'sudo',
-      ['apt-get', 'install', '-y', '-qq', 'forkstat'],
-      { timeout: 120000 }
-    )
+    // `apt-get update` is the expensive half of this, and runner images ship
+    // with package lists that are usually good enough, so it is only paid for
+    // when installing straight away does not work.
+    try {
+      await execFileAsync(
+        'sudo',
+        ['apt-get', 'install', '-y', '-qq', 'forkstat'],
+        { timeout: 120000 }
+      )
+    } catch {
+      logger.debug('Installing forkstat needed an apt-get update first')
+      await execFileAsync('sudo', ['apt-get', 'update', '-qq'], {
+        timeout: 120000
+      })
+      await execFileAsync(
+        'sudo',
+        ['apt-get', 'install', '-y', '-qq', 'forkstat'],
+        { timeout: 120000 }
+      )
+    }
     const { stdout } = await execFileAsync('which', ['forkstat'])
     return stdout.trim() || null
   } catch (error) {
@@ -120,6 +132,14 @@ function getExtraProcessInfo(command: CompletedCommand): string | null {
 ///////////////////////////
 
 export async function start(): Promise<boolean> {
+  if (core.getInput('proc_trace_enable') === 'false') {
+    logger.info(
+      `Process tracing disabled by the "proc_trace_enable" input. ` +
+        `Resource metrics are still collected.`
+    )
+    return false
+  }
+
   logger.info(`Starting process tracer ...`)
 
   try {

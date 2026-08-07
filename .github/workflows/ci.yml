@@ -53,6 +53,48 @@ jobs:
         id: npm-smoke-test
         run: npm run smoke-test
 
+  # `proc_trace_enable: false` must skip the forkstat install entirely, which
+  # is the whole point of the input: it is the only part of the action that
+  # needs sudo and costs setup time.
+  test-action-no-proc-trace:
+    name: GitHub Actions Test (no process tracing)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Confirm forkstat is not already present
+        run: |
+          if command -v forkstat >/dev/null; then
+            echo "::error::forkstat is preinstalled, this test cannot prove anything"
+            exit 1
+          fi
+
+      - name: Collect telemetry without process tracing
+        uses: ./
+        with:
+          comment_on_pr: false
+          proc_trace_enable: false
+
+      - name: Do some work
+        run: sha256sum /etc/hostname
+
+      - name: Verify nothing was installed and no trace was taken
+        run: |
+          if command -v forkstat >/dev/null; then
+            echo "::error::forkstat was installed despite proc_trace_enable: false"
+            exit 1
+          fi
+          if [ -e /tmp/proc-trace.out ]; then
+            echo "::error::a process trace was written despite proc_trace_enable: false"
+            exit 1
+          fi
+          echo "no install, no trace - resource metrics only"
+
   # Runs the action on itself, so a release cannot ship a dist/ bundle that
   # builds but blows up inside a real workflow.
   test-action:

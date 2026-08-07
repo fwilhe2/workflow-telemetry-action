@@ -12,6 +12,13 @@ inputs:
       '5'."
     default: '5'
     required: false
+  proc_trace_enable:
+    description:
+      "Set to `false` to skip process tracing, which is the only part of the
+      action that installs anything (the `forkstat` package) and needs `sudo`.
+      Resource metrics are unaffected. Defaults to 'true'."
+    default: 'true'
+    required: false
   proc_trace_min_duration:
     description:
       "Puts minimum limit for process execution duration to be traced. Must be a

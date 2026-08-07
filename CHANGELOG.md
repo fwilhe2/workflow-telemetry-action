@@ -52,6 +52,16 @@ the process tracer all changed.
   template: ES modules bundled with rollup instead of ncc, flat ESLint config,
   Jest, and `.node-version`.
 
+### Added
+
+- A `proc_trace_enable` input (default `true`). Process tracing is the only part
+  of the action that installs anything or needs `sudo`; turning it off leaves
+  resource metrics untouched and costs nothing to set up. Useful on workflows
+  with many short jobs.
+- forkstat is now installed without a preceding `apt-get update`, which is only
+  run if installing straight away fails. Measured on runners, this saves 3.2s of
+  8.6s on x64 and 3.4s of 12.5s on arm64.
+
 ### Removed
 
 - `dist/sc`, a bundle nothing ever executed. Only `dist/scw` is spawned, and the

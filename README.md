@@ -55,6 +55,12 @@ and as trace table with the following information:
 - File name
 - Arguments
 
+> **Cost:** process tracing installs `forkstat` on first use, measured at about
+> 5s on x64 and 9s on arm64. Everything else the action does needs no setup. On
+> workflows with many short jobs - a build matrix that mostly hits its cache,
+> say - it is worth setting `proc_trace_enable: false` there and leaving it on
+> for the long jobs where the trace actually tells you something.
+
 > **Note on process tracing** Process tracing uses
 > [forkstat](https://github.com/ColinIanKing/forkstat), installed from the
 > distribution's package manager on first use. It reads the kernel's
@@ -117,18 +123,19 @@ jobs:
 
 ## Configuration
 
-| Option                       | Requirement | Description                                                                                                                                                                                      |
-| ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `github_token`               | Optional    | An alternative GitHub token, other than the default provided by GitHub Actions runner.                                                                                                           |
-| `metric_frequency`           | Optional    | Metric collection frequency in seconds. Must be a number. Defaults to `5`.                                                                                                                       |
-| `proc_trace_min_duration`    | Optional    | Puts minimum limit for process execution duration to be traced. Must be a number. Defaults to `-1` which means process duration filtering is not applied.                                        |
-| `proc_trace_sys_enable`      | Optional    | Enables tracing default system processes (`aws`, `cat`, `sed`, ...). Defaults to `false`.                                                                                                        |
-| `proc_trace_chart_show`      | Optional    | Enables showing traced processes in trace chart. Defaults to `true`.                                                                                                                             |
-| `proc_trace_chart_max_count` | Optional    | Maximum number of processes to be shown in trace chart (applicable if `proc_trace_chart_show` input is `true`). Must be a number. Defaults to `100`.                                             |
-| `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `true`.                                                                                                                             |
-| `comment_on_pr`              | Optional    | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission                  |
-| `job_summary`                | Optional    | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`. |
-| `theme`                      | Optional    | **Deprecated and ignored.** Charts are rendered with Mermaid, which follows the reader's GitHub theme automatically.                                                                             |
+| Option                       | Requirement | Description                                                                                                                                                                                                                       |
+| ---------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github_token`               | Optional    | An alternative GitHub token, other than the default provided by GitHub Actions runner.                                                                                                                                            |
+| `metric_frequency`           | Optional    | Metric collection frequency in seconds. Must be a number. Defaults to `5`.                                                                                                                                                        |
+| `proc_trace_enable`          | Optional    | Set to `false` to skip process tracing. It is the only part of the action that installs anything (`forkstat`, ~5s on x64 and ~9s on arm64) and the only part needing `sudo`. Resource metrics are unaffected. Defaults to `true`. |
+| `proc_trace_min_duration`    | Optional    | Puts minimum limit for process execution duration to be traced. Must be a number. Defaults to `-1` which means process duration filtering is not applied.                                                                         |
+| `proc_trace_sys_enable`      | Optional    | Enables tracing default system processes (`aws`, `cat`, `sed`, ...). Defaults to `false`.                                                                                                                                         |
+| `proc_trace_chart_show`      | Optional    | Enables showing traced processes in trace chart. Defaults to `true`.                                                                                                                                                              |
+| `proc_trace_chart_max_count` | Optional    | Maximum number of processes to be shown in trace chart (applicable if `proc_trace_chart_show` input is `true`). Must be a number. Defaults to `100`.                                                                              |
+| `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `true`.                                                                                                                                                              |
+| `comment_on_pr`              | Optional    | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission                                                   |
+| `job_summary`                | Optional    | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`.                                  |
+| `theme`                      | Optional    | **Deprecated and ignored.** Charts are rendered with Mermaid, which follows the reader's GitHub theme automatically.                                                                                                              |
 
 ## Development
 
