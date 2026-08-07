@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PORT=${SMOKE_TEST_PORT:-7799}
-BUNDLES=(dist/main/index.js dist/post/index.js dist/sc/index.js dist/scw/index.js)
+BUNDLES=(dist/main/index.js dist/post/index.js dist/scw/index.js)
 fail=0
 
 note() { echo "  $*"; }
@@ -61,7 +61,7 @@ echo
 echo "== Checking every bundle loads under $(node --version) =="
 # `main` and `post` talk to the GitHub API, so they are only loaded, not run to
 # completion. Loading is enough to surface missing or broken modules.
-for bundle in dist/main/index.js dist/post/index.js dist/sc/index.js; do
+for bundle in dist/main/index.js dist/post/index.js; do
   name=$(basename "$(dirname "$bundle")")
   if err=$(node --input-type=module -e "await import('./$bundle')" 2>&1 >/dev/null); then
     ok "$name loaded"

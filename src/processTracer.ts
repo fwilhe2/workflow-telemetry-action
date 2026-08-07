@@ -5,7 +5,6 @@ import * as fs from 'fs'
 import * as os from 'os'
 import path from 'path'
 import * as core from '@actions/core'
-import { sprintf } from 'sprintf-js'
 import { parse } from './procTraceParser.js'
 import { CompletedCommand, WorkflowJobType } from './interfaces/index.js'
 import * as logger from './logger.js'
@@ -73,6 +72,31 @@ async function ensureForkstat(): Promise<string | null> {
     )
     return null
   }
+}
+
+/** Lays out one line of the process trace table. */
+function formatRow(
+  ts: string | number,
+  name: string | number,
+  user: string | number,
+  pid: string | number,
+  ppid: string | number,
+  startTime: string | number,
+  duration: string | number,
+  exitCode: string | number,
+  command: string
+): string {
+  return [
+    String(ts).padEnd(12),
+    String(name).padEnd(16),
+    String(user).padStart(10),
+    String(pid).padStart(7),
+    String(ppid).padStart(7),
+    String(startTime).padStart(15),
+    String(duration).padStart(15),
+    String(exitCode).padStart(10),
+    command
+  ].join(' ')
 }
 
 function getExtraProcessInfo(command: CompletedCommand): string | null {
@@ -279,8 +303,7 @@ export async function report(
     if (procTraceTableShow) {
       const commandInfos: string[] = []
       commandInfos.push(
-        sprintf(
-          '%-12s %-16s %10s %7s %7s %15s %15s %10s %-20s',
+        formatRow(
           'TIME',
           'NAME',
           'USER',
@@ -294,8 +317,7 @@ export async function report(
       )
       for (const command of completedCommands) {
         commandInfos.push(
-          sprintf(
-            '%-12s %-16s %10s %7d %7d %15d %15d %10d %s %s',
+          formatRow(
             command.ts,
             command.name,
             command.user,
@@ -304,8 +326,7 @@ export async function report(
             command.startTime,
             command.duration,
             command.exitCode,
-            command.fileName,
-            command.args.join(' ')
+            `${command.fileName} ${command.args.join(' ')}`
           )
         )
       }

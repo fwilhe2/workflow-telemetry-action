@@ -1,6 +1,5 @@
 import { ChildProcess, spawn } from 'child_process'
 import path from 'path'
-import axios from 'axios'
 import * as core from '@actions/core'
 import {
   CPUStats,
@@ -24,13 +23,29 @@ const STAT_SERVER_PORT = 7777
 // unreadable chart (and a very large summary). Longer runs are downsampled.
 const MAX_CHART_POINTS = 120
 
+/** Calls the stat collector worker, which listens on localhost. */
+async function callStatServer(
+  pathname: string,
+  method = 'GET'
+): Promise<unknown> {
+  const response: Response = await fetch(
+    `http://localhost:${STAT_SERVER_PORT}${pathname}`,
+    { method }
+  )
+  if (!response.ok) {
+    throw new Error(
+      `Stat server responded ${response.status} for ${method} ${pathname}`
+    )
+  }
+  const body: string = await response.text()
+  return body ? JSON.parse(body) : null
+}
+
 async function triggerStatCollect(): Promise<void> {
   logger.debug('Triggering stat collect ...')
-  const response = await axios.post(
-    `http://localhost:${STAT_SERVER_PORT}/collect`
-  )
+  const result: unknown = await callStatServer('/collect', 'POST')
   if (logger.isDebugEnabled()) {
-    logger.debug(`Triggered stat collect: ${JSON.stringify(response.data)}`)
+    logger.debug(`Triggered stat collect: ${JSON.stringify(result)}`)
   }
 }
 
@@ -171,12 +186,12 @@ async function getCPUStats(): Promise<ProcessedCPUStats> {
   const systemLoadX: ProcessedStats[] = []
 
   logger.debug('Getting CPU stats ...')
-  const response = await axios.get(`http://localhost:${STAT_SERVER_PORT}/cpu`)
+  const stats = (await callStatServer('/cpu')) as CPUStats[]
   if (logger.isDebugEnabled()) {
-    logger.debug(`Got CPU stats: ${JSON.stringify(response.data)}`)
+    logger.debug(`Got CPU stats: ${JSON.stringify(stats)}`)
   }
 
-  response.data.forEach((element: CPUStats) => {
+  stats.forEach((element: CPUStats) => {
     userLoadX.push({
       x: element.time,
       y: element.userLoad && element.userLoad > 0 ? element.userLoad : 0
@@ -196,14 +211,12 @@ async function getMemoryStats(): Promise<ProcessedMemoryStats> {
   const availableMemoryX: ProcessedStats[] = []
 
   logger.debug('Getting memory stats ...')
-  const response = await axios.get(
-    `http://localhost:${STAT_SERVER_PORT}/memory`
-  )
+  const stats = (await callStatServer('/memory')) as MemoryStats[]
   if (logger.isDebugEnabled()) {
-    logger.debug(`Got memory stats: ${JSON.stringify(response.data)}`)
+    logger.debug(`Got memory stats: ${JSON.stringify(stats)}`)
   }
 
-  response.data.forEach((element: MemoryStats) => {
+  stats.forEach((element: MemoryStats) => {
     activeMemoryX.push({
       x: element.time,
       y:
@@ -229,14 +242,12 @@ async function getNetworkStats(): Promise<ProcessedNetworkStats> {
   const networkWriteX: ProcessedStats[] = []
 
   logger.debug('Getting network stats ...')
-  const response = await axios.get(
-    `http://localhost:${STAT_SERVER_PORT}/network`
-  )
+  const stats = (await callStatServer('/network')) as NetworkStats[]
   if (logger.isDebugEnabled()) {
-    logger.debug(`Got network stats: ${JSON.stringify(response.data)}`)
+    logger.debug(`Got network stats: ${JSON.stringify(stats)}`)
   }
 
-  response.data.forEach((element: NetworkStats) => {
+  stats.forEach((element: NetworkStats) => {
     networkReadX.push({
       x: element.time,
       y: element.rxMb && element.rxMb > 0 ? element.rxMb : 0
@@ -256,12 +267,12 @@ async function getDiskStats(): Promise<ProcessedDiskStats> {
   const diskWriteX: ProcessedStats[] = []
 
   logger.debug('Getting disk stats ...')
-  const response = await axios.get(`http://localhost:${STAT_SERVER_PORT}/disk`)
+  const stats = (await callStatServer('/disk')) as DiskStats[]
   if (logger.isDebugEnabled()) {
-    logger.debug(`Got disk stats: ${JSON.stringify(response.data)}`)
+    logger.debug(`Got disk stats: ${JSON.stringify(stats)}`)
   }
 
-  response.data.forEach((element: DiskStats) => {
+  stats.forEach((element: DiskStats) => {
     diskReadX.push({
       x: element.time,
       y: element.rxMb && element.rxMb > 0 ? element.rxMb : 0
@@ -281,14 +292,12 @@ async function getDiskSizeStats(): Promise<ProcessedDiskSizeStats> {
   const diskUsedX: ProcessedStats[] = []
 
   logger.debug('Getting disk size stats ...')
-  const response = await axios.get(
-    `http://localhost:${STAT_SERVER_PORT}/disk_size`
-  )
+  const stats = (await callStatServer('/disk_size')) as DiskSizeStats[]
   if (logger.isDebugEnabled()) {
-    logger.debug(`Got disk size stats: ${JSON.stringify(response.data)}`)
+    logger.debug(`Got disk size stats: ${JSON.stringify(stats)}`)
   }
 
-  response.data.forEach((element: DiskSizeStats) => {
+  stats.forEach((element: DiskSizeStats) => {
     diskAvailableX.push({
       x: element.time,
       y:

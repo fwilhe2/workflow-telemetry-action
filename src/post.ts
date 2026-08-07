@@ -1,6 +1,5 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { Octokit } from '@octokit/action'
 import * as stepTracer from './stepTracer.js'
 import * as statCollector from './statCollector.js'
 import * as processTracer from './processTracer.js'
@@ -10,7 +9,8 @@ import { WorkflowJobType } from './interfaces/index.js'
 const { pull_request } = github.context.payload
 const { workflow, job, repo, runId, sha } = github.context
 const PAGE_SIZE = 100
-const octokit: Octokit = new Octokit()
+// Honours the `github_token` input, which defaults to ${{ github.token }}.
+const octokit = github.getOctokit(core.getInput('github_token'))
 
 async function getCurrentJob(): Promise<WorkflowJobType | null> {
   const _getCurrentJob = async (): Promise<WorkflowJobType | null> => {

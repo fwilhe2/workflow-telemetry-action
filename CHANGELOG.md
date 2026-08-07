@@ -29,6 +29,9 @@ the process tracer all changed.
   `src/**/*.ts` glob matches a single directory level.
 - The post step now reports the underlying cause when looking up the workflow
   job fails, instead of swallowing it.
+- The `github_token` input was documented but never read: the client took its
+  token from the `GITHUB_TOKEN` environment variable instead, so setting the
+  input had no effect. It is now used.
 
 ### Changed
 
@@ -49,6 +52,19 @@ the process tracer all changed.
   template: ES modules bundled with rollup instead of ncc, flat ESLint config,
   Jest, and `.node-version`.
 
+### Removed
+
+- `dist/sc`, a bundle nothing ever executed. Only `dist/scw` is spawned, and the
+  stat collector is bundled into `main`/`post` already.
+- Four runtime dependencies: `axios` (replaced by the built-in `fetch`),
+  `sprintf-js` (replaced by `padStart`/`padEnd`), `@octokit/action` (replaced by
+  `@actions/github`, which is already a dependency) and `@actions/exec`, which
+  was never imported. Together with `dist/sc` this roughly halves the size of
+  `dist/`; the `post` bundle alone goes from 2.9 MB to 1.2 MB.
+- The stale `metrics-example.png` screenshot, which still showed the old
+  image-based charts. The README now embeds a live Mermaid example instead,
+  which cannot go out of date the same way.
+
 ### Security
 
 - Removed the two committed closed-source binaries that ran as root under
@@ -57,6 +73,7 @@ the process tracer all changed.
   `linguist-generated`, so they never appeared in diffs.
 - All dependencies updated; `npm audit` reports no vulnerabilities, down
   from 29.
+- Added a CodeQL analysis workflow, run on pushes, pull requests and weekly.
 
 ### Added
 

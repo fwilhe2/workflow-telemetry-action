@@ -5,14 +5,13 @@ import json from '@rollup/plugin-json'
 import nodeResolve from '@rollup/plugin-node-resolve'
 import typescript from '@rollup/plugin-typescript'
 
-// Unlike the upstream template, this action ships four separate bundles:
-//   main / post  - the action's entry points, referenced from action.yml
-//   sc / scw     - spawned as standalone processes by the stat collector,
-//                  so they cannot share a chunk with the entry points.
+// Unlike the upstream template, this action ships three separate bundles:
+//   main / post - the action's entry points, referenced from action.yml
+//   scw         - spawned as its own process by the stat collector, so it
+//                 cannot share a chunk with the entry points.
 const bundles = {
   main: 'src/main.ts',
   post: 'src/post.ts',
-  sc: 'src/statCollector.ts',
   scw: 'src/statCollectorWorker.ts'
 }
 

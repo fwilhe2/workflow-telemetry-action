@@ -75,11 +75,30 @@ and as trace table with the following information:
 
 An example output of a simple workflow run will look like this.
 
+The step trace and the process trace are rendered as Mermaid gantt charts:
+
 ![Step Trace Example](/images/step-trace-example.png)
 
-![Metrics Example](/images/metrics-example.png)
-
 ![Process Trace Example](/images/proc-trace-example.png)
+
+Resource metrics are rendered as Mermaid `xychart` blocks, one per series, and
+appear in the job summary like this:
+
+```mermaid
+xychart-beta
+    title "CPU Load - User (%)"
+    x-axis "Time (s)" 0 --> 55
+    y-axis "Load (%)" 0 --> 100
+    line [12.4, 30.1, 55.2, 78.9, 96.3, 88.1, 41.0, 22.8, 15.2, 9.4, 6.1, 3.2]
+```
+
+```mermaid
+xychart-beta
+    title "Memory Usage - Used (MB)"
+    x-axis "Time (s)" 0 --> 55
+    y-axis "Memory (MB)" 0 --> 2900
+    line [860, 1180, 1640, 2020, 2280, 2410, 2520, 2580, 2610, 2740, 2870, 2880]
+```
 
 ## Usage
 
@@ -148,7 +167,6 @@ from source, so only the four bundle directories are ever rebuilt.
 | ----------- | ---------------------------- | ------------------------------------------ |
 | `dist/main` | `src/main.ts`                | The action's `main` step                   |
 | `dist/post` | `src/post.ts`                | The action's `post` step, reports results  |
-| `dist/sc`   | `src/statCollector.ts`       | Stat collector                             |
 | `dist/scw`  | `src/statCollectorWorker.ts` | Spawned as its own process, serves metrics |
 
 ## Credits and licence
