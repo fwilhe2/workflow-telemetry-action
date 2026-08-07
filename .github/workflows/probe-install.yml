@@ -1,0 +1,51 @@
+# TEMPORARY. Measures how long installing forkstat costs with and without a
+# preceding `apt-get update`, on both architectures. Delete once done.
+name: Probe forkstat install cost
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.arch }} / ${{ matrix.mode }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        mode: [direct, with-update]
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Baseline
+        run: |
+          echo "arch: $(uname -m)"
+          . /etc/os-release && echo "distro: $NAME $VERSION_ID"
+          echo "forkstat preinstalled: $(command -v forkstat || echo no)"
+          echo "apt lists present: $(ls /var/lib/apt/lists/*Packages* 2>/dev/null | wc -l) file(s)"
+
+      - name: Install (${{ matrix.mode }})
+        run: |
+          start=$(date +%s%3N)
+          if [ "${{ matrix.mode }}" = "with-update" ]; then
+            sudo apt-get update -qq
+            mid=$(date +%s%3N)
+            echo "apt-get update took $(( mid - start ))ms"
+          fi
+          if sudo apt-get install -y -qq forkstat >/dev/null 2>&1; then
+            echo "install: ok"
+          else
+            echo "install FAILED without update; retrying with update"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq forkstat >/dev/null
+            echo "install: ok after fallback"
+          fi
+          end=$(date +%s%3N)
+          echo "TOTAL ${{ matrix.mode }} on ${{ matrix.arch }}: $(( end - start ))ms"
+          forkstat -h 2>&1 | head -1 || true
