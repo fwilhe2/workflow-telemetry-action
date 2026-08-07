@@ -41,6 +41,12 @@ and as trace table with the following information:
 - File name
 - Arguments
 
+> **Note on charts** Resource metrics are rendered as
+> [Mermaid](https://mermaid.js.org/) charts, which GitHub renders natively in
+> job summaries and pull request comments. Earlier versions posted the data to a
+> third-party chart-image service that no longer exists, so those charts came
+> out broken. Nothing is sent anywhere now.
+
 ### Example Output
 
 An example output of a simple workflow run will look like this.
@@ -79,7 +85,7 @@ jobs:
 | `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `true`.                                                                                                                             |
 | `comment_on_pr`              | Optional    | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission                  |
 | `job_summary`                | Optional    | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`. |
-| `theme`                      | Optional    | Set to `dark` to generate charts compatible with Github **dark** mode. Defaults to `light`.                                                                                                      |
+| `theme`                      | Optional    | **Deprecated and ignored.** Charts are rendered with Mermaid, which follows the reader's GitHub theme automatically.                                                                             |
 
 ## Development
 

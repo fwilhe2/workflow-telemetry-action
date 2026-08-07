@@ -56,8 +56,8 @@ inputs:
     required: false
   theme:
     description:
-      "Set to `dark` to generate charts compatible with Github dark mode.
-      Defaults to 'light'."
+      "Deprecated and ignored. Charts are now rendered with Mermaid, which
+      follows the reader's GitHub theme automatically."
     default: 'light'
     required: false
 

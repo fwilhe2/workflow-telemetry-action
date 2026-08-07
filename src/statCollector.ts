@@ -6,8 +6,6 @@ import {
   CPUStats,
   DiskSizeStats,
   DiskStats,
-  GraphResponse,
-  LineGraphOptions,
   MemoryStats,
   NetworkStats,
   ProcessedCPUStats,
@@ -16,15 +14,15 @@ import {
   ProcessedMemoryStats,
   ProcessedNetworkStats,
   ProcessedStats,
-  StackedAreaGraphOptions,
   WorkflowJobType
 } from './interfaces/index.js'
 import * as logger from './logger.js'
 
 const STAT_SERVER_PORT = 7777
 
-const BLACK = '#000000'
-const WHITE = '#FFFFFF'
+// Mermaid renders every sample as a tick, so a long job would produce an
+// unreadable chart (and a very large summary). Longer runs are downsampled.
+const MAX_CHART_POINTS = 120
 
 async function triggerStatCollect(): Promise<void> {
   logger.debug('Triggering stat collect ...')
@@ -36,179 +34,133 @@ async function triggerStatCollect(): Promise<void> {
   }
 }
 
-async function reportWorkflowMetrics(): Promise<string> {
-  const theme: string = core.getInput('theme', { required: false })
-  let axisColor = BLACK
-  switch (theme) {
-    case 'light':
-      axisColor = BLACK
-      break
-    case 'dark':
-      axisColor = WHITE
-      break
-    default:
-      core.warning(`Invalid theme: ${theme}`)
+/**
+ * Renders a series as a Mermaid `xychart-beta` block, which GitHub renders
+ * natively in job summaries and pull request comments. This replaces the
+ * chart-image service the action used to call, which no longer exists.
+ *
+ * `xychart-beta` has no legend, so each series gets its own titled chart.
+ */
+export function renderChart(
+  title: string,
+  yAxisLabel: string,
+  points: ProcessedStats[]
+): string {
+  const samples: ProcessedStats[] = downsample(points, MAX_CHART_POINTS)
+  const values: number[] = samples.map((p) => round(p.y))
+
+  // Samples are taken on a fixed interval, so they are evenly spaced and the
+  // x axis can simply run from 0 to the elapsed time of the last sample.
+  const elapsedSeconds: number = Math.max(
+    1,
+    Math.round((points[points.length - 1].x - points[0].x) / 1000)
+  )
+
+  // Mermaid rejects a zero-height y axis, which happens whenever a metric
+  // stayed flat (idle network or disk, for example).
+  let min: number = Math.min(...values)
+  let max: number = Math.max(...values)
+  if (min === max) {
+    min = Math.min(0, min)
+    max = max === min ? 1 : max
   }
 
+  return [
+    '```mermaid',
+    'xychart-beta',
+    `    title "${escapeTitle(title)}"`,
+    `    x-axis "Time (s)" 0 --> ${elapsedSeconds}`,
+    `    y-axis "${escapeTitle(yAxisLabel)}" ${round(min)} --> ${round(max)}`,
+    `    line [${values.join(', ')}]`,
+    '```',
+    ''
+  ].join('\n')
+}
+
+/** Mermaid titles are quoted strings, so quotes have to go. */
+function escapeTitle(text: string): string {
+  return text.replace(/"/g, "'")
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
+/** Averages `points` down to at most `limit` evenly spaced buckets. */
+export function downsample(
+  points: ProcessedStats[],
+  limit: number
+): ProcessedStats[] {
+  if (points.length <= limit) {
+    return points
+  }
+  const bucketSize: number = Math.ceil(points.length / limit)
+  const result: ProcessedStats[] = []
+  for (let i = 0; i < points.length; i += bucketSize) {
+    const bucket: ProcessedStats[] = points.slice(i, i + bucketSize)
+    const sum: number = bucket.reduce((acc, p) => acc + p.y, 0)
+    result.push({ x: bucket[0].x, y: sum / bucket.length })
+  }
+  return result
+}
+
+/** Renders a chart only when there is data to plot. */
+function chartFor(
+  title: string,
+  yAxisLabel: string,
+  points: ProcessedStats[]
+): string | null {
+  return points && points.length ? renderChart(title, yAxisLabel, points) : null
+}
+
+async function reportWorkflowMetrics(): Promise<string> {
   const { userLoadX, systemLoadX } = await getCPUStats()
   const { activeMemoryX, availableMemoryX } = await getMemoryStats()
   const { networkReadX, networkWriteX } = await getNetworkStats()
   const { diskReadX, diskWriteX } = await getDiskStats()
   const { diskAvailableX, diskUsedX } = await getDiskSizeStats()
 
-  const cpuLoad =
-    userLoadX && userLoadX.length && systemLoadX && systemLoadX.length
-      ? await getStackedAreaGraph({
-          label: 'CPU Load (%)',
-          axisColor,
-          areas: [
-            {
-              label: 'User Load',
-              color: '#e41a1c99',
-              points: userLoadX
-            },
-            {
-              label: 'System Load',
-              color: '#ff7f0099',
-              points: systemLoadX
-            }
-          ]
-        })
-      : null
-
-  const memoryUsage =
-    activeMemoryX &&
-    activeMemoryX.length &&
-    availableMemoryX &&
-    availableMemoryX.length
-      ? await getStackedAreaGraph({
-          label: 'Memory Usage (MB)',
-          axisColor,
-          areas: [
-            {
-              label: 'Used',
-              color: '#377eb899',
-              points: activeMemoryX
-            },
-            {
-              label: 'Free',
-              color: '#4daf4a99',
-              points: availableMemoryX
-            }
-          ]
-        })
-      : null
-
-  const networkIORead =
-    networkReadX && networkReadX.length
-      ? await getLineGraph({
-          label: 'Network I/O Read (MB)',
-          axisColor,
-          line: {
-            label: 'Read',
-            color: '#be4d25',
-            points: networkReadX
-          }
-        })
-      : null
-
-  const networkIOWrite =
-    networkWriteX && networkWriteX.length
-      ? await getLineGraph({
-          label: 'Network I/O Write (MB)',
-          axisColor,
-          line: {
-            label: 'Write',
-            color: '#6c25be',
-            points: networkWriteX
-          }
-        })
-      : null
-
-  const diskIORead =
-    diskReadX && diskReadX.length
-      ? await getLineGraph({
-          label: 'Disk I/O Read (MB)',
-          axisColor,
-          line: {
-            label: 'Read',
-            color: '#be4d25',
-            points: diskReadX
-          }
-        })
-      : null
-
-  const diskIOWrite =
-    diskWriteX && diskWriteX.length
-      ? await getLineGraph({
-          label: 'Disk I/O Write (MB)',
-          axisColor,
-          line: {
-            label: 'Write',
-            color: '#6c25be',
-            points: diskWriteX
-          }
-        })
-      : null
-
-  const diskSizeUsage =
-    diskUsedX && diskUsedX.length && diskAvailableX && diskAvailableX.length
-      ? await getStackedAreaGraph({
-          label: 'Disk Usage (MB)',
-          axisColor,
-          areas: [
-            {
-              label: 'Used',
-              color: '#377eb899',
-              points: diskUsedX
-            },
-            {
-              label: 'Free',
-              color: '#4daf4a99',
-              points: diskAvailableX
-            }
-          ]
-        })
-      : null
+  const sections: Array<{ heading: string; charts: Array<string | null> }> = [
+    {
+      heading: '### CPU Metrics',
+      charts: [
+        chartFor('CPU Load - User (%)', 'Load (%)', userLoadX),
+        chartFor('CPU Load - System (%)', 'Load (%)', systemLoadX)
+      ]
+    },
+    {
+      heading: '### Memory Metrics',
+      charts: [
+        chartFor('Memory Usage - Used (MB)', 'Memory (MB)', activeMemoryX),
+        chartFor('Memory Usage - Free (MB)', 'Memory (MB)', availableMemoryX)
+      ]
+    },
+    {
+      heading: '### IO Metrics',
+      charts: [
+        chartFor('Network I/O - Read (MB)', 'Network (MB)', networkReadX),
+        chartFor('Network I/O - Write (MB)', 'Network (MB)', networkWriteX),
+        chartFor('Disk I/O - Read (MB)', 'Disk (MB)', diskReadX),
+        chartFor('Disk I/O - Write (MB)', 'Disk (MB)', diskWriteX)
+      ]
+    },
+    {
+      heading: '### Disk Size Metrics',
+      charts: [
+        chartFor('Disk Usage - Used (MB)', 'Disk (MB)', diskUsedX),
+        chartFor('Disk Usage - Free (MB)', 'Disk (MB)', diskAvailableX)
+      ]
+    }
+  ]
 
   const postContentItems: string[] = []
-  if (cpuLoad) {
-    postContentItems.push(
-      '### CPU Metrics',
-      `![${cpuLoad.id}](${cpuLoad.url})`,
-      ''
+  for (const section of sections) {
+    const rendered: string[] = section.charts.filter(
+      (c): c is string => c !== null
     )
-  }
-  if (memoryUsage) {
-    postContentItems.push(
-      '### Memory Metrics',
-      `![${memoryUsage.id}](${memoryUsage.url})`,
-      ''
-    )
-  }
-  if ((networkIORead && networkIOWrite) || (diskIORead && diskIOWrite)) {
-    postContentItems.push(
-      '### IO Metrics',
-      '|               | Read      | Write     |',
-      '|---            |---        |---        |'
-    )
-  }
-  if (networkIORead && networkIOWrite) {
-    postContentItems.push(
-      `| Network I/O   | ![${networkIORead.id}](${networkIORead.url})        | ![${networkIOWrite.id}](${networkIOWrite.url})        |`
-    )
-  }
-  if (diskIORead && diskIOWrite) {
-    postContentItems.push(
-      `| Disk I/O      | ![${diskIORead.id}](${diskIORead.url})              | ![${diskIOWrite.id}](${diskIOWrite.url})              |`
-    )
-  }
-  if (diskSizeUsage) {
-    postContentItems.push(
-      '### Disk Size Metrics',
-      `![${diskSizeUsage.id}](${diskSizeUsage.url})`,
-      ''
-    )
+    if (rendered.length) {
+      postContentItems.push(section.heading, ...rendered)
+    }
   }
 
   return postContentItems.join('\n')
@@ -352,71 +304,6 @@ async function getDiskSizeStats(): Promise<ProcessedDiskSizeStats> {
   })
 
   return { diskAvailableX, diskUsedX }
-}
-
-async function getLineGraph(options: LineGraphOptions): Promise<GraphResponse> {
-  const payload = {
-    options: {
-      width: 1000,
-      height: 500,
-      xAxis: {
-        label: 'Time'
-      },
-      yAxis: {
-        label: options.label
-      },
-      timeTicks: {
-        unit: 'auto'
-      }
-    },
-    lines: [options.line]
-  }
-
-  let response = null
-  try {
-    response = await axios.put(
-      'https://api.globadge.com/v1/chartgen/line/time',
-      payload
-    )
-  } catch (error) {
-    logger.error(error)
-    logger.error(`getLineGraph ${JSON.stringify(payload)}`)
-  }
-
-  return response?.data
-}
-
-async function getStackedAreaGraph(
-  options: StackedAreaGraphOptions
-): Promise<GraphResponse> {
-  const payload = {
-    options: {
-      width: 1000,
-      height: 500,
-      xAxis: {
-        label: 'Time'
-      },
-      yAxis: {
-        label: options.label
-      },
-      timeTicks: {
-        unit: 'auto'
-      }
-    },
-    areas: options.areas
-  }
-
-  let response = null
-  try {
-    response = await axios.put(
-      'https://api.globadge.com/v1/chartgen/stacked-area/time',
-      payload
-    )
-  } catch (error) {
-    logger.error(error)
-    logger.error(`getStackedAreaGraph ${JSON.stringify(payload)}`)
-  }
-  return response?.data
 }
 
 ///////////////////////////
