@@ -19,7 +19,7 @@ And collects the following metrics:
 - Network I/O (read and write) in MB
 - Disk I/O (read and write) in MB
 
-And traces the process executions (only supported on `Ubuntu`)
+And traces the process executions (Linux runners, x64 and arm64)
 
 as trace chart with the following information:
 
@@ -40,6 +40,16 @@ and as trace table with the following information:
 - Exit code
 - File name
 - Arguments
+
+> **Note on process tracing** Process tracing uses
+> [forkstat](https://github.com/ColinIanKing/forkstat), installed from the
+> distribution's package manager on first use. It reads the kernel's
+> process-event connector, so it needs `sudo` but no eBPF, kernel headers or a
+> matching kernel version, and works on x64 and arm64 alike. Earlier versions
+> shipped prebuilt closed-source x86-64 eBPF binaries in `dist/`, which only ran
+> on Ubuntu 20.04 and 22.04 and therefore stopped working entirely once the
+> runners moved on. If `forkstat` cannot be installed, tracing is skipped and
+> the rest of the telemetry still works.
 
 > **Note on charts** Resource metrics are rendered as
 > [Mermaid](https://mermaid.js.org/) charts, which GitHub renders natively in

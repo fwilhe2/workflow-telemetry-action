@@ -1,46 +1,78 @@
 import { ChildProcess, spawn, exec } from 'child_process'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import * as fs from 'fs'
+import * as os from 'os'
 import path from 'path'
 import * as core from '@actions/core'
-import si from 'systeminformation'
 import { sprintf } from 'sprintf-js'
 import { parse } from './procTraceParser.js'
 import { CompletedCommand, WorkflowJobType } from './interfaces/index.js'
 import * as logger from './logger.js'
 
+const execFileAsync = promisify(execFile)
+
 const PROC_TRACER_PID_KEY = 'PROC_TRACER_PID'
+const PROC_TRACER_STARTED_AT_KEY = 'PROC_TRACER_STARTED_AT'
 const PROC_TRACER_OUTPUT_FILE_NAME = 'proc-trace.out'
-const PROC_TRACER_BINARY_NAME_UBUNTU_20 = 'proc_tracer_ubuntu-20'
-const PROC_TRACER_BINARY_NAME_UBUNTU_22 = 'proc_tracer_ubuntu-22'
 const DEFAULT_PROC_TRACE_CHART_MAX_COUNT = 100
 const GHA_FILE_NAME_PREFIX = '/home/runner/work/_actions/'
 
 let finished = false
 
-async function getProcessTracerBinaryName(): Promise<string | null> {
-  const osInfo: si.Systeminformation.OsData = await si.osInfo()
-  if (osInfo) {
-    // Check whether we are running on Ubuntu
-    if (osInfo.distro === 'Ubuntu') {
-      const majorVersion: number = parseInt(osInfo.release.split('.')[0])
-      if (majorVersion === 20) {
-        logger.info(`Using ${PROC_TRACER_BINARY_NAME_UBUNTU_20}`)
-        return PROC_TRACER_BINARY_NAME_UBUNTU_20
-      }
+/** Where the trace is written. */
+function traceFilePath(): string {
+  return path.join(os.tmpdir(), PROC_TRACER_OUTPUT_FILE_NAME)
+}
 
-      if (majorVersion === 22) {
-        logger.info(`Using ${PROC_TRACER_BINARY_NAME_UBUNTU_22}`)
-        return PROC_TRACER_BINARY_NAME_UBUNTU_22
-      }
+/**
+ * Locates `forkstat`, installing it if necessary.
+ *
+ * forkstat watches the kernel's process-event connector, so it reports every
+ * exec and exit on the machine without needing eBPF, kernel headers or a
+ * matching kernel version. It is packaged for every Debian/Ubuntu release and
+ * architecture, which the previous prebuilt x86-64 binaries were not.
+ */
+async function ensureForkstat(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('which', ['forkstat'])
+    const found: string = stdout.trim()
+    if (found) {
+      logger.info(`Using forkstat at ${found}`)
+      return found
     }
+  } catch {
+    // Not installed yet; fall through and try to install it.
   }
 
-  logger.info(
-    `Process tracing disabled because of unsupported OS: ${JSON.stringify(
-      osInfo
-    )}`
-  )
+  if (os.platform() !== 'linux') {
+    logger.info(
+      `Process tracing is only supported on Linux, not on ${os.platform()}`
+    )
+    return null
+  }
 
-  return null
+  try {
+    logger.info('Installing forkstat ...')
+    await execFileAsync('sudo', ['apt-get', 'update', '-qq'], {
+      timeout: 120000
+    })
+    await execFileAsync(
+      'sudo',
+      ['apt-get', 'install', '-y', '-qq', 'forkstat'],
+      { timeout: 120000 }
+    )
+    const { stdout } = await execFileAsync('which', ['forkstat'])
+    return stdout.trim() || null
+  } catch (error) {
+    logger.info(
+      `Process tracing disabled: could not install forkstat (${logger.messageOf(
+        error
+      )}). ` +
+        `Install the "forkstat" package on the runner to enable process tracing.`
+    )
+    return null
+  }
 }
 
 function getExtraProcessInfo(command: CompletedCommand): string | null {
@@ -67,44 +99,42 @@ export async function start(): Promise<boolean> {
   logger.info(`Starting process tracer ...`)
 
   try {
-    const procTracerBinaryName: string | null =
-      await getProcessTracerBinaryName()
-    if (procTracerBinaryName) {
-      const procTraceOutFilePath = path.join(
-        import.meta.dirname,
-        '../proc-tracer',
-        PROC_TRACER_OUTPUT_FILE_NAME
-      )
-      const child: ChildProcess = spawn(
-        'sudo',
-        [
-          path.join(
-            import.meta.dirname,
-            `../proc-tracer/${procTracerBinaryName}`
-          ),
-          '-f',
-          'json',
-          '-o',
-          procTraceOutFilePath
-        ],
-        {
-          detached: true,
-          stdio: 'ignore',
-          env: {
-            ...process.env
-          }
-        }
-      )
-      child.unref()
-
-      core.saveState(PROC_TRACER_PID_KEY, child.pid?.toString())
-
-      logger.info(`Started process tracer`)
-
-      return true
-    } else {
+    const forkstat: string | null = await ensureForkstat()
+    if (!forkstat) {
       return false
     }
+
+    const procTraceOutFilePath: string = traceFilePath()
+    // forkstat writes to stdout, so the trace is captured by redirection.
+    const out: number = fs.openSync(procTraceOutFilePath, 'w')
+    const child: ChildProcess = spawn(
+      'sudo',
+      [
+        forkstat,
+        '-e',
+        'fork,exec,exit',
+        // Extra columns: user, exit status and duration.
+        '-x',
+        // Line buffered, so nothing is lost when the tracer is interrupted.
+        '-l'
+      ],
+      {
+        detached: true,
+        stdio: ['ignore', out, 'ignore'],
+        env: {
+          ...process.env
+        }
+      }
+    )
+    child.unref()
+    fs.closeSync(out)
+
+    core.saveState(PROC_TRACER_PID_KEY, child.pid?.toString())
+    core.saveState(PROC_TRACER_STARTED_AT_KEY, new Date().toISOString())
+
+    logger.info(`Started process tracer`)
+
+    return true
   } catch (error) {
     logger.error('Unable to start process tracer')
     logger.error(error)
@@ -154,11 +184,7 @@ export async function report(
     return null
   }
   try {
-    const procTraceOutFilePath = path.join(
-      import.meta.dirname,
-      '../proc-tracer',
-      PROC_TRACER_OUTPUT_FILE_NAME
-    )
+    const procTraceOutFilePath: string = traceFilePath()
 
     logger.info(
       `Getting process tracer result from file ${procTraceOutFilePath} ...`
@@ -188,11 +214,13 @@ export async function report(
     const procTraceTableShow: boolean =
       core.getInput('proc_trace_table_show') === 'true'
 
+    const startedAtState: string = core.getState(PROC_TRACER_STARTED_AT_KEY)
     const completedCommands: CompletedCommand[] = await parse(
       procTraceOutFilePath,
       {
         minDuration: procTraceMinDuration,
-        traceSystemProcesses: procTraceSysEnable
+        traceSystemProcesses: procTraceSysEnable,
+        startedAt: startedAtState ? new Date(startedAtState) : new Date()
       }
     )
 
@@ -252,10 +280,10 @@ export async function report(
       const commandInfos: string[] = []
       commandInfos.push(
         sprintf(
-          '%-12s %-16s %7s %7s %7s %15s %15s %10s %-20s',
+          '%-12s %-16s %10s %7s %7s %15s %15s %10s %-20s',
           'TIME',
           'NAME',
-          'UID',
+          'USER',
           'PID',
           'PPID',
           'START TIME',
@@ -267,10 +295,10 @@ export async function report(
       for (const command of completedCommands) {
         commandInfos.push(
           sprintf(
-            '%-12s %-16s %7d %7d %7d %15d %15d %10d %s %s',
+            '%-12s %-16s %10s %7d %7d %15d %15d %10d %s %s',
             command.ts,
             command.name,
-            command.uid,
+            command.user,
             command.pid,
             command.ppid,
             command.startTime,

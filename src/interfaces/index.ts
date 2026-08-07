@@ -65,12 +65,14 @@ export interface ProcessedDiskSizeStats {
 }
 
 export interface CompletedCommand {
+  /** Wall clock time of the exec, as `HH:MM:SS`. */
   readonly ts: string
-  readonly event: string
   readonly name: string
-  readonly uid: number
+  /** Owning user's name. forkstat reports names rather than numeric uids. */
+  readonly user: string
   readonly pid: number
-  readonly ppid: string
+  /** 0 when the fork that created this process was not observed. */
+  readonly ppid: number
   readonly startTime: number
   readonly fileName: string
   readonly args: string[]
@@ -82,4 +84,6 @@ export interface CompletedCommand {
 export interface ProcEventParseOptions {
   readonly minDuration: number
   readonly traceSystemProcesses: boolean
+  /** Anchors forkstat's time-only stamps to a date. Defaults to now. */
+  readonly startedAt?: Date
 }
