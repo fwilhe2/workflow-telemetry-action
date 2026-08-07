@@ -61,6 +61,11 @@ the process tracer all changed.
 - forkstat is now installed without a preceding `apt-get update`, which is only
   run if installing straight away fails. Measured on runners, this saves 3.2s of
   8.6s on x64 and 3.4s of 12.5s on arm64.
+- Unit tests (Jest) for the process trace parser and the chart rendering.
+- `tests/smoke-test.sh`, which checks the built bundles import only Node
+  builtins, load, and that the stat collector serves metrics over HTTP.
+- CI runs the action against itself on x64 **and** arm64, and asserts the
+  process tracer actually captured events.
 
 ### Removed
 
@@ -84,11 +89,3 @@ the process tracer all changed.
 - All dependencies updated; `npm audit` reports no vulnerabilities, down
   from 29.
 - Added a CodeQL analysis workflow, run on pushes, pull requests and weekly.
-
-### Added
-
-- Unit tests (Jest) for the process trace parser and the chart rendering.
-- `tests/smoke-test.sh`, which checks the built bundles import only Node
-  builtins, load, and that the stat collector serves metrics over HTTP.
-- CI runs the action against itself on x64 **and** arm64, and asserts the
-  process tracer actually captured events.
