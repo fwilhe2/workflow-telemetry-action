@@ -3,10 +3,10 @@ name: CodeQL
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
   schedule:
     # Weekly, so newly published advisories are picked up on a dormant repo.
     - cron: '31 7 * * 1'

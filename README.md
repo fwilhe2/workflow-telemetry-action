@@ -214,7 +214,7 @@ is an ordinary commit that goes through review and CI like anything else.
 1. Add the release to [CHANGELOG.md](CHANGELOG.md).
 2. Bump `version` in `package.json`.
 3. `npm run all`, then commit — including the rebuilt `dist/`.
-4. Push to `master` and let CI go green.
+4. Push to `main` and let CI go green.
 5. Run the **Release** workflow (Actions → Release → Run workflow). Tick
    `dry_run` first if you want to see the version it resolves and confirm the
    tag is free without publishing anything.
