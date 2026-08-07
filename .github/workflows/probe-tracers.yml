@@ -21,67 +21,38 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Environment
-        run: |
-          echo "arch: $(uname -m)  kernel: $(uname -r)"
-          . /etc/os-release && echo "distro: $NAME $VERSION_ID"
-          echo -n "BTF present: "; [ -f /sys/kernel/btf/vmlinux ] && echo yes || echo NO
-          echo "unprivileged_bpf_disabled: $(cat /proc/sys/kernel/unprivileged_bpf_disabled 2>/dev/null)"
-
-      - name: Install tooling
+      - name: Install forkstat
         run: |
           sudo apt-get update -qq
-          start=$(date +%s)
-          sudo apt-get install -y -qq bpftrace forkstat >/dev/null
-          echo "install took $(( $(date +%s) - start ))s"
-          echo "bpftrace: $(bpftrace --version 2>&1 | head -1)"
-          echo "forkstat: $(forkstat --version 2>&1 | head -1)"
-          dpkg-query -Wf '${Installed-Size}\t${Package}\n' bpftrace forkstat
+          sudo apt-get install -y -qq forkstat >/dev/null
+          echo "arch: $(uname -m)"
+          dpkg-query -Wf '${Version} ${Installed-Size}kB\n' forkstat
 
-      - name: forkstat output shape
+      - name: forkstat options
+        run: forkstat -h 2>&1 | head -40 || true
+
+      - name: fork event shape, long args, nonzero exit, truncation
         run: |
-          sudo timeout 6 forkstat -e exec,exit -x >/tmp/forkstat.txt 2>&1 &
+          sudo timeout 8 forkstat -e fork,exec,exit -x >/tmp/f.txt 2>&1 &
           sleep 1
-          (node -e "console.log(1)"; /bin/echo hi; sleep 0.2; git --version) >/dev/null 2>&1
-          sleep 5
-          echo "----- forkstat -e exec,exit -x -----"
-          head -25 /tmp/forkstat.txt
+          /bin/echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cccccccccccccccccccccccccccccc dddddddddddddddddddddddddddddd eeeeeeeeeeeeeeeeeeeeeeeeeeeeee >/dev/null
+          /bin/sh -c 'exit 3' || true
+          /bin/sh -c 'exit 42' || true
+          node -e "process.exit(7)" || true
+          sleep 6
+          echo "----- fork/exec/exit -----"
+          grep -E "echo|sh -c|node -e|fork" /tmp/f.txt | head -30
+          echo "----- header -----"
+          head -1 /tmp/f.txt
 
-      - name: bpftrace feature probe
+      - name: numeric uid and no-tty variants
         run: |
-          cat > /tmp/probe.bt <<'BT'
-          tracepoint:syscalls:sys_enter_execve {
-            printf("ARGV %d ", pid);
-            join(args->argv);
-          }
-          tracepoint:sched:sched_process_exec {
-            printf("EXEC pid=%d ppid=%d uid=%d comm=%s file=%s nsecs=%llu ts=%s\n",
-                   pid, curtask->real_parent->tgid, uid, comm,
-                   str(args->filename), nsecs, strftime("%H:%M:%S", nsecs));
-          }
-          tracepoint:sched:sched_process_exit {
-            $t = curtask;
-            printf("EXIT pid=%d code=%d nsecs=%llu\n", pid, $t->exit_code >> 8, nsecs);
-          }
-          BT
-          sudo timeout 6 bpftrace /tmp/probe.bt >/tmp/bpftrace.txt 2>&1 &
-          sleep 2
-          (node -e "console.log(1)"; /bin/echo hi; git --version) >/dev/null 2>&1
-          sleep 5
-          echo "----- bpftrace output -----"
-          head -40 /tmp/bpftrace.txt
-
-      - name: bpftrace clock probe
-        run: |
-          cat > /tmp/clock.bt <<'BT'
-          BEGIN {
-            printf("nsecs=%llu\n", nsecs);
-            printf("strftime_s=%s\n", strftime("%s", nsecs));
-            printf("strftime_f=%s\n", strftime("%H:%M:%S.%f", nsecs));
-            exit();
-          }
-          BT
-          echo "wall_ms_before=$(date +%s%3N)"
-          sudo bpftrace /tmp/clock.bt 2>&1 | head -10
-          echo "wall_ms_after=$(date +%s%3N)"
-          echo "uptime=$(cat /proc/uptime)"
+          # -X or similar for numeric uid? try documented short opts.
+          for opt in "-x" "-x -l"; do
+            echo "== forkstat $opt =="
+            sudo timeout 4 forkstat -e exec $opt >/tmp/o.txt 2>&1 &
+            sleep 1
+            /bin/echo probe >/dev/null
+            sleep 3.5
+            head -3 /tmp/o.txt
+          done
