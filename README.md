@@ -205,6 +205,38 @@ of them drift apart, or if the Dependabot guard is removed.
 | `dist/post` | `src/post.ts`                | The action's `post` step, reports results  |
 | `dist/scw`  | `src/statCollectorWorker.ts` | Spawned as its own process, serves metrics |
 
+## Releasing
+
+Releases are cut by the `Release` workflow, which tags whatever version is
+already in `package.json`. There is no `npm version` step, so the version bump
+is an ordinary commit that goes through review and CI like anything else.
+
+1. Add the release to [CHANGELOG.md](CHANGELOG.md).
+2. Bump `version` in `package.json`.
+3. `npm run all`, then commit — including the rebuilt `dist/`.
+4. Push to `master` and let CI go green.
+5. Run the **Release** workflow (Actions → Release → Run workflow). Tick
+   `dry_run` first if you want to see the version it resolves and confirm the
+   tag is free without publishing anything.
+
+The workflow then:
+
+- rebuilds `dist/` and **fails if it differs** from what is committed, so a
+  release can never ship bundles that do not match `src/`
+- runs the unit tests and the smoke test
+- **fails if the tag already exists**, rather than moving it
+- tags `vX.Y.Z`, and force-moves the major tag `vX` to the same commit
+- creates a GitHub release with generated notes
+
+The major tag is the one users reference
+(`uses: fwilhe2/workflow-telemetry-action@v3`), which is why it moves with every
+release in that series. Bumping the major means users have to opt in by changing
+their `uses:` line, so reserve it for changes that break existing workflows —
+see 3.0.0 in the changelog for the kind of thing that qualifies.
+
+It uses the built-in `GITHUB_TOKEN` with `contents: write`; no secrets need
+configuring.
+
 ## Credits and licence
 
 Originally written by Serkan Özal and contributors at Thundra / Runforesight /
