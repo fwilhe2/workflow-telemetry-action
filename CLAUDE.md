@@ -15,6 +15,20 @@ unmaintained. Upstream is dead; do not expect to pull fixes from it. Licence is
 `package.json` wrongly said MIT and that was corrected here. A fork cannot
 relicence inherited code, so leave `LICENSE.md` alone.
 
+## Pull requests always target this repository
+
+GitHub still records this repo as a fork, so `gh pr create` defaults its base to
+`catchpoint/workflow-telemetry-action` — a repository we do not own. **Always
+pass `--repo fwilhe2/workflow-telemetry-action` and base `main`:**
+
+```bash
+gh pr create --repo fwilhe2/workflow-telemetry-action --base main ...
+```
+
+Never open, comment on, or push to anything under `catchpoint/`. Opening a pull
+request against someone else's repository is public and notifies them, so check
+the base before creating one, not after.
+
 ## Commands
 
 Requires Node 24 (see `.node-version`).
