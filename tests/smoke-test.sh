@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 #
-# Smoke test for the bundled action in dist/.
+# Integration smoke test for the bundled action in dist/.
 #
-# `ncc` happily emits a bundle containing `webpackMissingModule` stubs when it
-# cannot resolve a dependency (this happens for ESM-only packages, which cannot
-# be bundled into a CommonJS output). The build still exits 0, so the breakage
-# only shows up at runtime inside a real workflow. These checks catch it here.
+# The unit tests under __tests__/ cover source modules in isolation. This
+# script checks the thing that actually ships: the rollup bundles. It verifies
+# they import nothing but Node builtins (anything else would not resolve on a
+# runner, since node_modules is not published), that each one loads, and that
+# the stat collector really serves metrics over HTTP.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 PORT=${SMOKE_TEST_PORT:-7799}
+BUNDLES=(dist/main/index.js dist/post/index.js dist/sc/index.js dist/scw/index.js)
 fail=0
 
 note() { echo "  $*"; }
@@ -21,17 +23,33 @@ bad() {
   fail=1
 }
 
-echo "== Checking bundles exist and are free of unresolved modules =="
-for bundle in dist/main/index.js dist/post/index.js dist/sc/index.js dist/scw/index.js; do
+echo "== Checking bundles import only Node builtins =="
+for bundle in "${BUNDLES[@]}"; do
   if [[ ! -f $bundle ]]; then
     bad "$bundle is missing (run 'npm run package')"
     continue
   fi
-  if grep -q 'webpackMissingModule' "$bundle"; then
-    bad "$bundle contains unresolved modules (webpackMissingModule)"
-    note "a dependency could not be bundled - most likely it is ESM-only"
+  external=$(node -e "
+    import('node:module').then(({ builtinModules }) => {
+      const fs = require('node:fs')
+      const src = fs.readFileSync('$bundle', 'utf8')
+      const builtin = new Set(builtinModules)
+      const bad = []
+      for (const m of src.matchAll(/^import[^;]*?from\s*'([^']+)'/gm)) {
+        // A 'node:' prefix can only ever name a builtin. Some of them
+        // (node:sqlite, node:test, ...) are absent from builtinModules
+        // because they are reachable *only* via the prefixed form.
+        if (m[1].startsWith('node:')) continue
+        if (!builtin.has(m[1])) bad.push(m[1])
+      }
+      console.log([...new Set(bad)].join(', '))
+    })
+  ")
+  if [[ -n $external ]]; then
+    bad "$bundle imports non-builtin modules: $external"
+    note "these will not resolve on a runner - the bundle is incomplete"
   else
-    ok "$bundle bundled cleanly"
+    ok "$(basename "$(dirname "$bundle")")/index.js is self-contained"
   fi
 done
 
@@ -42,16 +60,17 @@ fi
 echo
 echo "== Checking every bundle loads under $(node --version) =="
 # `main` and `post` talk to the GitHub API, so they are only loaded, not run to
-# completion. Loading is enough to surface missing/broken modules.
+# completion. Loading is enough to surface missing or broken modules.
 for bundle in dist/main/index.js dist/post/index.js dist/sc/index.js; do
-  if err=$(node -e "require('./$bundle')" 2>&1 >/dev/null); then
-    ok "$bundle loaded"
-  elif grep -qi 'cannot find module\|is not a function\|not defined\|ERR_REQUIRE_ESM' <<<"$err"; then
-    bad "$bundle failed to load"
+  name=$(basename "$(dirname "$bundle")")
+  if err=$(node --input-type=module -e "await import('./$bundle')" 2>&1 >/dev/null); then
+    ok "$name loaded"
+  elif grep -qiE 'cannot find (module|package)|ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED|is not a function|not defined' <<<"$err"; then
+    bad "$name failed to load"
     note "$(head -n 3 <<<"$err")"
   else
     # Runtime errors from talking to GitHub/the network are expected here.
-    ok "$bundle loaded (exited with a runtime error, not a module error)"
+    ok "$name loaded (exited with a runtime error, not a module error)"
   fi
 done
 
@@ -84,15 +103,16 @@ for endpoint in cpu memory network disk disk_size; do
     bad "GET /$endpoint returned HTTP $code"
     continue
   fi
-  if node -e "
+  count=$(node -e "
     const d = require('/tmp/smoke-body.json')
     if (!Array.isArray(d) || d.length === 0) process.exit(1)
     if (typeof d[0].time !== 'number') process.exit(1)
-  " 2>/dev/null; then
-    ok "GET /$endpoint returned $(node -p "require('/tmp/smoke-body.json').length") sample(s)"
-  else
+    console.log(d.length)
+  " 2>/dev/null) || {
     bad "GET /$endpoint returned no usable samples: $(head -c 120 /tmp/smoke-body.json)"
-  fi
+    continue
+  }
+  ok "GET /$endpoint returned $count sample(s)"
 done
 
 # /disk_size used to fall through into /collect for lack of a `break`, which

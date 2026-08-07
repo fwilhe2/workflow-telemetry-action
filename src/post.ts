@@ -1,11 +1,11 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { Octokit } from '@octokit/action'
-import * as stepTracer from './stepTracer'
-import * as statCollector from './statCollector'
-import * as processTracer from './processTracer'
-import * as logger from './logger'
-import { WorkflowJobType } from './interfaces'
+import * as stepTracer from './stepTracer.js'
+import * as statCollector from './statCollector.js'
+import * as processTracer from './processTracer.js'
+import * as logger from './logger.js'
+import { WorkflowJobType } from './interfaces/index.js'
 
 const { pull_request } = github.context.payload
 const { workflow, job, repo, runId, sha } = github.context
@@ -28,7 +28,7 @@ async function getCurrentJob(): Promise<WorkflowJobType | null> {
         break
       }
       const currentJobs = jobs.filter(
-        it =>
+        (it) =>
           it.status === 'in_progress' &&
           it.runner_name === process.env.RUNNER_NAME
       )
@@ -49,13 +49,13 @@ async function getCurrentJob(): Promise<WorkflowJobType | null> {
       if (currentJob && currentJob.id) {
         return currentJob
       }
-      await new Promise(r => setTimeout(r, 1000))
+      await new Promise((r) => setTimeout(r, 1000))
     }
-  } catch (error: any) {
+  } catch (error) {
     logger.error(
       `Unable to get current workflow job info. ` +
         `Please sure that your workflow have "actions:read" permission! ` +
-        `Cause: ${error.message}`
+        `Cause: ${logger.messageOf(error)}`
     )
   }
   return null
@@ -158,8 +158,8 @@ async function run(): Promise<void> {
     await reportAll(currentJob, allContent)
 
     logger.info(`Finish completed`)
-  } catch (error: any) {
-    logger.error(error.message)
+  } catch (error) {
+    logger.error(logger.messageOf(error))
   }
 }
 

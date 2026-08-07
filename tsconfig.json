@@ -1,19 +1,26 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    "target": "es2023", /* Specify ECMAScript target version. Node 24 supports ES2023 and beyond. */
-    "lib": ["es2023"], /* Library files to include in the compilation. */
-    "module": "commonjs", /* Specify module code generation. The action is bundled to CommonJS by ncc. */
-    "moduleResolution": "node10", /* Resolve dependencies the way the CommonJS output requires. */
-    "outDir": "./lib", /* Redirect output structure to the directory. */
-    "rootDir": "./src", /* Specify the root directory of input files. Use to control the output directory structure with --outDir. */
-    "strict": true, /* Enable all strict type-checking options. */
-    "noImplicitAny": true, /* Raise error on expressions and declarations with an implied 'any' type. */
-    "esModuleInterop": true, /* Enables emit interoperability between CommonJS and ES Modules via creation of namespace objects for all imports. Implies 'allowSyntheticDefaultImports'. */
+    "allowSyntheticDefaultImports": true,
+    "declaration": false,
+    "declarationMap": false,
+    "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
+    "isolatedModules": true,
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "newLine": "lf",
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "outDir": "./dist",
+    "pretty": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "target": "ES2023"
   },
-  "exclude": [
-    "node_modules",
-    "**/*.test.ts"
-  ]
+  "exclude": ["__fixtures__", "__tests__", "coverage", "dist", "node_modules"],
+  "include": ["src"]
 }

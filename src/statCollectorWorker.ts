@@ -1,13 +1,13 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from 'http'
 import si from 'systeminformation'
-import * as logger from './logger'
+import * as logger from './logger.js'
 import {
   CPUStats,
   MemoryStats,
   DiskStats,
   NetworkStats,
   DiskSizeStats
-} from './interfaces'
+} from './interfaces/index.js'
 
 const STATS_FREQ: number =
   parseInt(process.env.WORKFLOW_TELEMETRY_STAT_FREQ || '') || 5000
@@ -31,7 +31,7 @@ const cpuStatsHistogram: CPUStats[] = []
 async function collectCPUStats(
   statTime: number,
   _timeInterval: number
-): Promise<any> {
+): Promise<void> {
   return si
     .currentLoad()
     .then((data: si.Systeminformation.CurrentLoadData) => {
@@ -43,7 +43,7 @@ async function collectCPUStats(
       }
       cpuStatsHistogram.push(cpuStats)
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
       logger.error(error)
     })
 }
@@ -58,7 +58,7 @@ const memoryStatsHistogram: MemoryStats[] = []
 async function collectMemoryStats(
   statTime: number,
   _timeInterval: number
-): Promise<any> {
+): Promise<void> {
   return si
     .mem()
     .then((data: si.Systeminformation.MemData) => {
@@ -70,7 +70,7 @@ async function collectMemoryStats(
       }
       memoryStatsHistogram.push(memoryStats)
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
       logger.error(error)
     })
 }
@@ -85,7 +85,7 @@ const networkStatsHistogram: NetworkStats[] = []
 async function collectNetworkStats(
   statTime: number,
   timeInterval: number
-): Promise<any> {
+): Promise<void> {
   return si
     .networkStats()
     .then((data: si.Systeminformation.NetworkStatsData[]) => {
@@ -102,7 +102,7 @@ async function collectNetworkStats(
       }
       networkStatsHistogram.push(networkStats)
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
       logger.error(error)
     })
 }
@@ -117,7 +117,7 @@ const diskStatsHistogram: DiskStats[] = []
 async function collectDiskStats(
   statTime: number,
   timeInterval: number
-): Promise<any> {
+): Promise<void> {
   return si
     .fsStats()
     .then((data: si.Systeminformation.FsStatsData) => {
@@ -130,7 +130,7 @@ async function collectDiskStats(
       }
       diskStatsHistogram.push(diskStats)
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
       logger.error(error)
     })
 }
@@ -140,7 +140,7 @@ const diskSizeStatsHistogram: DiskSizeStats[] = []
 async function collectDiskSizeStats(
   statTime: number,
   _timeInterval: number
-): Promise<any> {
+): Promise<void> {
   return si
     .fsSize()
     .then((data: si.Systeminformation.FsSizeData[]) => {
@@ -157,7 +157,7 @@ async function collectDiskSizeStats(
       }
       diskSizeStatsHistogram.push(diskSizeStats)
     })
-    .catch((error: any) => {
+    .catch((error: unknown) => {
       logger.error(error)
     })
 }
@@ -166,7 +166,7 @@ async function collectDiskSizeStats(
 
 async function collectStats(
   triggeredFromScheduler = true
-): Promise<Array<Promise<any>>> {
+): Promise<Array<Promise<void>>> {
   try {
     const currentTime: number = Date.now()
     const timeInterval: number = statCollectTime
@@ -175,7 +175,7 @@ async function collectStats(
 
     statCollectTime = currentTime
 
-    const promises: Array<Promise<any>> = []
+    const promises: Array<Promise<void>> = []
 
     promises.push(collectCPUStats(statCollectTime, timeInterval))
     promises.push(collectMemoryStats(statCollectTime, timeInterval))
@@ -257,13 +257,13 @@ function startHttpServer(): void {
             response.end()
           }
         }
-      } catch (error: any) {
+      } catch (error) {
         logger.error(error)
         response.statusCode = 500
         response.end(
           JSON.stringify({
-            type: error.type,
-            message: error.message
+            type: error instanceof Error ? error.name : typeof error,
+            message: logger.messageOf(error)
           })
         )
       }

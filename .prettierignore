@@ -1,3 +1,8 @@
+.DS_Store
 dist/
 lib/
 node_modules/
+coverage/
+
+# Legal text, kept verbatim.
+LICENSE.md

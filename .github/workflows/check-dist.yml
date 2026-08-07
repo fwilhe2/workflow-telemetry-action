@@ -1,0 +1,70 @@
+# In TypeScript actions, `dist/` is a special directory. When you reference an
+# action with the `uses:` property, the bundles under `dist/` are the code that
+# will be run. For this project they are built from `src/` by rollup. This
+# workflow ensures the checked-in bundles match what the sources produce.
+#
+# Note that `dist/proc-tracer/` holds committed binaries that are *not* built
+# from source, so only the generated bundle directories are rebuilt.
+name: Check Transpiled JavaScript
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-dist:
+    name: Check dist/
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        id: setup-node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install Dependencies
+        id: install
+        run: npm ci
+
+      - name: Build dist/ Directory
+        id: build
+        run: npm run package
+
+      # This will fail the workflow if the bundles are different than expected.
+      - name: Compare Directories
+        id: diff
+        run: |
+          if [ ! -d dist/ ]; then
+            echo "Expected dist/ directory does not exist. See status below:"
+            ls -la ./
+            exit 1
+          fi
+          if [ "$(git diff --ignore-space-at-eol --text dist/ | wc -l)" -gt "0" ]; then
+            echo "Detected uncommitted changes after build. See status below:"
+            git diff --ignore-space-at-eol --text dist/
+            exit 1
+          fi
+
+      # If `dist/` was different than expected, upload the expected version as
+      # a workflow artifact.
+      - name: Upload Artifact
+        id: upload
+        if: ${{ failure() && steps.diff.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/

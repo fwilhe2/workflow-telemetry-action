@@ -14,11 +14,21 @@ export function info(msg: string): void {
   core.info(`${LOG_HEADER} ${msg}`)
 }
 
-export function error(msg: string | Error): void {
+/**
+ * Best-effort message for a value caught by a `catch` block, which TypeScript
+ * types as `unknown` because anything at all can be thrown.
+ */
+export function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+export function error(msg: unknown): void {
   if (msg instanceof String || typeof msg === 'string') {
     core.error(`${LOG_HEADER} ${msg}`)
-  } else {
+  } else if (msg instanceof Error) {
     core.error(`${LOG_HEADER} ${msg.name}`)
     core.error(msg)
+  } else {
+    core.error(`${LOG_HEADER} ${String(msg)}`)
   }
 }

@@ -18,8 +18,8 @@ import {
   ProcessedStats,
   StackedAreaGraphOptions,
   WorkflowJobType
-} from './interfaces'
-import * as logger from './logger'
+} from './interfaces/index.js'
+import * as logger from './logger.js'
 
 const STAT_SERVER_PORT = 7777
 
@@ -378,7 +378,7 @@ async function getLineGraph(options: LineGraphOptions): Promise<GraphResponse> {
       'https://api.globadge.com/v1/chartgen/line/time',
       payload
     )
-  } catch (error: any) {
+  } catch (error) {
     logger.error(error)
     logger.error(`getLineGraph ${JSON.stringify(payload)}`)
   }
@@ -412,7 +412,7 @@ async function getStackedAreaGraph(
       'https://api.globadge.com/v1/chartgen/stacked-area/time',
       payload
     )
-  } catch (error: any) {
+  } catch (error) {
     logger.error(error)
     logger.error(`getStackedAreaGraph ${JSON.stringify(payload)}`)
   }
@@ -436,7 +436,7 @@ export async function start(): Promise<boolean> {
 
     const child: ChildProcess = spawn(
       process.argv[0],
-      [path.join(__dirname, '../scw/index.js')],
+      [path.join(import.meta.dirname, '../scw/index.js')],
       {
         detached: true,
         stdio: 'ignore',
@@ -453,7 +453,7 @@ export async function start(): Promise<boolean> {
     logger.info(`Started stat collector`)
 
     return true
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Unable to start stat collector')
     logger.error(error)
 
@@ -471,7 +471,7 @@ export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
     logger.info(`Finished stat collector`)
 
     return true
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Unable to finish stat collector')
     logger.error(error)
 
@@ -490,7 +490,7 @@ export async function report(
     logger.info(`Reported stat collector result`)
 
     return postContent
-  } catch (error: any) {
+  } catch (error) {
     logger.error('Unable to report stat collector result')
     logger.error(error)
 

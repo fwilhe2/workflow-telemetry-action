@@ -1,0 +1,77 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-typescript:
+    name: TypeScript Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        id: setup-node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install Dependencies
+        id: npm-ci
+        run: npm ci
+
+      - name: Check Format
+        id: npm-format-check
+        run: npm run format:check
+
+      - name: Lint
+        id: npm-lint
+        run: npm run lint
+
+      - name: Test
+        id: npm-ci-test
+        run: npm run ci-test
+
+      - name: Smoke Test the Bundles
+        id: npm-smoke-test
+        run: npm run smoke-test
+
+  # Runs the action on itself, so a release cannot ship a dist/ bundle that
+  # builds but blows up inside a real workflow.
+  test-action:
+    name: GitHub Actions Test
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v7
+
+      - name: Collect telemetry for this job
+        id: test-action
+        uses: ./
+        with:
+          comment_on_pr: false
+
+      - name: Do some work worth measuring
+        id: workload
+        run: |
+          dd if=/dev/zero of=/tmp/blob bs=1M count=256
+          sha256sum /tmp/blob
+          rm /tmp/blob

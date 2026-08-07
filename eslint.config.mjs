@@ -1,78 +1,93 @@
-import github from 'eslint-plugin-github'
-import tseslint from 'typescript-eslint'
+// See: https://eslint.org/docs/latest/use/configure/configuration-files
 
-const {recommended: githubRecommended, typescript: githubTypescript} =
-  github.getFlatConfigs()
+import { FlatCompat } from '@eslint/eslintrc'
+import js from '@eslint/js'
+import typescriptEslint from '@typescript-eslint/eslint-plugin'
+import tsParser from '@typescript-eslint/parser'
+import jest from 'eslint-plugin-jest'
+import prettier from 'eslint-plugin-prettier'
+import globals from 'globals'
 
-export default tseslint.config(
+const compat = new FlatCompat({
+  baseDirectory: import.meta.dirname,
+  recommendedConfig: js.configs.recommended,
+  allConfig: js.configs.all
+})
+
+export default [
   {
-    ignores: ['dist/', 'lib/', 'node_modules/']
+    ignores: [
+      '**/coverage',
+      '**/dist',
+      '**/lib',
+      '**/linter',
+      '**/node_modules'
+    ]
   },
-  githubRecommended,
-  githubTypescript,
+  ...compat.extends(
+    'eslint:recommended',
+    'plugin:@typescript-eslint/eslint-recommended',
+    'plugin:@typescript-eslint/recommended',
+    'plugin:jest/recommended',
+    'plugin:prettier/recommended'
+  ),
   {
-    files: ['src/**/*.ts'],
+    plugins: {
+      jest,
+      prettier,
+      '@typescript-eslint': typescriptEslint
+    },
+
     languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+        Atomics: 'readonly',
+        SharedArrayBuffer: 'readonly'
+      },
+
+      parser: tsParser,
+      ecmaVersion: 2023,
+      sourceType: 'module',
+
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: [
+            '__tests__/*.ts',
+            'eslint.config.mjs',
+            'jest.config.js',
+            'rollup.config.ts'
+          ]
+        },
         tsconfigRootDir: import.meta.dirname
       }
     },
+
+    settings: {
+      'import/resolver': {
+        typescript: {
+          alwaysTryTypes: true,
+          project: 'tsconfig.json'
+        }
+      }
+    },
+
     rules: {
-      'i18n-text/no-en': 'off',
-      'eslint-comments/no-use': 'off',
-      'import/no-namespace': 'off',
-      'no-unused-vars': 'off',
-      // Renamed from `filenames/match-regex` in eslint-plugin-github v6.
-      'github/filenames-match-regex': 'off',
-      // TypeScript already resolves (and type-checks) these imports; the
-      // import plugin's resolver cannot follow "exports"-only ESM packages.
-      'import/no-unresolved': 'off',
       camelcase: 'off',
+      'eslint-comments/no-use': 'off',
+      'eslint-comments/no-unused-disable': 'off',
+      'i18n-text/no-en': 'off',
+      'import/no-namespace': 'off',
+      'no-console': 'off',
+      'no-shadow': 'off',
+      'no-unused-vars': 'off',
+      'prettier/prettier': 'error',
       // Unused params are kept where a signature is shared across the
       // stepTracer/statCollector/processTracer modules; mark them with `_`.
       '@typescript-eslint/no-unused-vars': [
         'error',
-        {argsIgnorePattern: '^_', varsIgnorePattern: '^_'}
-      ],
-      '@typescript-eslint/explicit-member-accessibility': [
-        'error',
-        {accessibility: 'no-public'}
-      ],
-      '@typescript-eslint/no-require-imports': 'error',
-      '@typescript-eslint/array-type': 'error',
-      '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/ban-ts-comment': 'error',
-      '@typescript-eslint/consistent-type-assertions': 'error',
-      '@typescript-eslint/explicit-function-return-type': [
-        'error',
-        {allowExpressions: true}
-      ],
-      '@typescript-eslint/no-array-constructor': 'error',
-      // Pre-existing debt, surfaced when `npm run lint` was fixed to actually
-      // walk src/ (the old `src/**/*.ts` glob only ever matched
-      // src/interfaces/). Kept as warnings so they stay visible without
-      // gating the build on a refactor of otherwise working code.
-      '@typescript-eslint/no-explicit-any': 'warn',
-      'github/no-then': 'warn',
-      'github/array-foreach': 'warn',
-      '@typescript-eslint/no-extraneous-class': 'error',
-      '@typescript-eslint/no-for-in-array': 'error',
-      '@typescript-eslint/no-inferrable-types': 'error',
-      '@typescript-eslint/no-misused-new': 'error',
-      '@typescript-eslint/no-namespace': 'error',
-      '@typescript-eslint/no-non-null-assertion': 'warn',
-      '@typescript-eslint/no-unnecessary-qualifier': 'error',
-      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
-      '@typescript-eslint/no-useless-constructor': 'error',
-      '@typescript-eslint/prefer-for-of': 'warn',
-      '@typescript-eslint/prefer-function-type': 'warn',
-      '@typescript-eslint/prefer-includes': 'error',
-      '@typescript-eslint/prefer-string-starts-ends-with': 'error',
-      '@typescript-eslint/promise-function-async': 'error',
-      '@typescript-eslint/require-array-sort-compare': 'error',
-      '@typescript-eslint/restrict-plus-operands': 'error',
-      '@typescript-eslint/unbound-method': 'error'
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
+      ]
     }
   }
-)
+]

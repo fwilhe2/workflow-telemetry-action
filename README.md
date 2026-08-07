@@ -1,24 +1,28 @@
 # workflow-telemetry-action
 
-A GitHub Action to track and monitor the 
+A GitHub Action to track and monitor the
+
 - workflow runs, jobs and steps
-- resource metrics 
-- and process activities 
-of your GitHub Action workflow runs. 
-If the run is triggered via a Pull Request, it will create a comment on the connected PR with the results 
-and/or publishes the results to the job summary. 
+- resource metrics
+- and process activities
+
+of your GitHub Action workflow runs. If the run is triggered via a Pull Request,
+it will create a comment on the connected PR with the results and/or publishes
+the results to the job summary.
 
 The action traces the jobs' step executions and shows them in trace chart,
 
 And collects the following metrics:
+
 - CPU Load (user and system) in percentage
 - Memory usage (used and free) in MB
 - Network I/O (read and write) in MB
 - Disk I/O (read and write) in MB
 
-And traces the process executions (only supported on `Ubuntu`) 
+And traces the process executions (only supported on `Ubuntu`)
 
 as trace chart with the following information:
+
 - Name
 - Start time
 - Duration (in ms)
@@ -26,6 +30,7 @@ as trace chart with the following information:
 - Exit status as success or fail (highlighted as red)
 
 and as trace table with the following information:
+
 - Name
 - Id
 - Parent id
@@ -63,15 +68,55 @@ jobs:
 
 ## Configuration
 
-| Option                       | Requirement       | Description
-|------------------------------| ---               | ---
-| `github_token`               | Optional          | An alternative GitHub token, other than the default provided by GitHub Actions runner.
-| `metric_frequency`           | Optional          | Metric collection frequency in seconds. Must be a number. Defaults to `5`.
-| `proc_trace_min_duration`    | Optional          | Puts minimum limit for process execution duration to be traced. Must be a number. Defaults to `-1` which means process duration filtering is not applied.
-| `proc_trace_sys_enable`      | Optional          | Enables tracing default system processes (`aws`, `cat`, `sed`, ...). Defaults to `false`.
-| `proc_trace_chart_show`      | Optional          | Enables showing traced processes in trace chart. Defaults to `true`.
-| `proc_trace_chart_max_count` | Optional          | Maximum number of processes to be shown in trace chart (applicable if `proc_trace_chart_show` input is `true`). Must be a number. Defaults to `100`.
-| `proc_trace_table_show`      | Optional          | Enables showing traced processes in trace table. Defaults to `true`.
-| `comment_on_pr`              | Optional          | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission
-| `job_summary`                | Optional          | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`.
-| `theme`                      | Optional          | Set to `dark` to generate charts compatible with Github **dark** mode. Defaults to `light`.
+| Option                       | Requirement | Description                                                                                                                                                                                      |
+| ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github_token`               | Optional    | An alternative GitHub token, other than the default provided by GitHub Actions runner.                                                                                                           |
+| `metric_frequency`           | Optional    | Metric collection frequency in seconds. Must be a number. Defaults to `5`.                                                                                                                       |
+| `proc_trace_min_duration`    | Optional    | Puts minimum limit for process execution duration to be traced. Must be a number. Defaults to `-1` which means process duration filtering is not applied.                                        |
+| `proc_trace_sys_enable`      | Optional    | Enables tracing default system processes (`aws`, `cat`, `sed`, ...). Defaults to `false`.                                                                                                        |
+| `proc_trace_chart_show`      | Optional    | Enables showing traced processes in trace chart. Defaults to `true`.                                                                                                                             |
+| `proc_trace_chart_max_count` | Optional    | Maximum number of processes to be shown in trace chart (applicable if `proc_trace_chart_show` input is `true`). Must be a number. Defaults to `100`.                                             |
+| `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `true`.                                                                                                                             |
+| `comment_on_pr`              | Optional    | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission                  |
+| `job_summary`                | Optional    | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`. |
+| `theme`                      | Optional    | Set to `dark` to generate charts compatible with Github **dark** mode. Defaults to `light`.                                                                                                      |
+
+## Development
+
+This action follows the layout of
+[actions/typescript-action](https://github.com/actions/typescript-action): the
+sources in `src/` are TypeScript ES modules, bundled by
+[rollup](https://rollupjs.org/) into the self-contained bundles under `dist/`
+that the runner actually executes.
+
+Requires Node.js 24 (see `.node-version`).
+
+```bash
+npm ci
+npm run all
+```
+
+`npm run all` formats, lints, runs the unit tests, rebuilds `dist/` and then
+smoke tests the bundles. The individual steps are:
+
+| Script                 | What it does                                                       |
+| ---------------------- | ------------------------------------------------------------------ |
+| `npm run lint`         | ESLint over the whole repo                                         |
+| `npm test`             | Jest unit tests in `__tests__/`                                    |
+| `npm run package`      | Rebuilds the four bundles in `dist/`                               |
+| `npm run smoke-test`   | Loads the built bundles and exercises the stat collector over HTTP |
+| `npm run format:write` | Formats with Prettier                                              |
+
+`dist/` is committed, so **rebuild and commit it with every source change** —
+the `Check Transpiled JavaScript` workflow fails when it drifts from `src/`.
+Note that `dist/proc-tracer/` holds prebuilt binaries that are not generated
+from source, so only the four bundle directories are ever rebuilt.
+
+### Why the bundles are split
+
+| Bundle      | Entry point                  | Purpose                                    |
+| ----------- | ---------------------------- | ------------------------------------------ |
+| `dist/main` | `src/main.ts`                | The action's `main` step                   |
+| `dist/post` | `src/post.ts`                | The action's `post` step, reports results  |
+| `dist/sc`   | `src/statCollector.ts`       | Stat collector                             |
+| `dist/scw`  | `src/statCollectorWorker.ts` | Spawned as its own process, serves metrics |
