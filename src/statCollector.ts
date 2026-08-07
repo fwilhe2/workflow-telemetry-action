@@ -20,7 +20,6 @@ import {
   WorkflowJobType
 } from './interfaces'
 import * as logger from './logger'
-import { log } from 'console'
 
 const STAT_SERVER_PORT = 7777
 
@@ -462,7 +461,7 @@ export async function start(): Promise<boolean> {
   }
 }
 
-export async function finish(currentJob: WorkflowJobType): Promise<boolean> {
+export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
   logger.info(`Finishing stat collector ...`)
 
   try {
@@ -481,7 +480,7 @@ export async function finish(currentJob: WorkflowJobType): Promise<boolean> {
 }
 
 export async function report(
-  currentJob: WorkflowJobType
+  _currentJob: WorkflowJobType
 ): Promise<string | null> {
   logger.info(`Reporting stat collector result ...`)
 

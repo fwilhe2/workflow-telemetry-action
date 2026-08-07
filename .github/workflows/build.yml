@@ -1,6 +1,9 @@
 name: build-workflow-telemetry
 
 on:
+  push:
+    branches:
+      - "master"
   pull_request:
     branches:
       - "master"
@@ -10,12 +13,32 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
-      - run: npm install
+          node-version: 24
+      - run: npm ci
       - run: npm run all
       - name: Verify no unstage changes
         run: tests/verify-no-unstaged-changes.sh
+
+  # Runs the action on itself, so a release cannot ship a dist/ bundle that
+  # builds but blows up inside a real workflow.
+  self-test:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Collect telemetry for this job
+        uses: ./
+        with:
+          comment_on_pr: false
+      - name: Do some work worth measuring
+        run: |
+          dd if=/dev/zero of=/tmp/blob bs=1M count=256
+          sha256sum /tmp/blob
+          rm /tmp/blob

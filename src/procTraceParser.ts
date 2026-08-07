@@ -54,7 +54,7 @@ export async function parse(
   const activeCommands: Map<number, any> = new Map<number, any>()
   const replacedCommands: Map<number, any> = new Map<number, any>()
   const completedCommands: CompletedCommand[] = []
-  let commandOrder: number = 0
+  let commandOrder = 0
 
   for await (let line of rl) {
     line = line.trim()
@@ -77,14 +77,14 @@ export async function parse(
           replacedCommands.set(event.pid, existingCommand)
         }
       } else if ('EXIT' === event.event) {
-        let activeCommandCompleted: boolean = false
-        let replacedCommandCompleted: boolean = false
+        let activeCommandCompleted = false
+        let replacedCommandCompleted = false
 
         // Process active command
         const activeCommand: any = activeCommands.get(event.pid)
         activeCommands.delete(event.pid)
         if (activeCommand) {
-          for (let key of Object.keys(event)) {
+          for (const key of Object.keys(event)) {
             if (!activeCommand.hasOwnProperty(key)) {
               activeCommand[key] = event[key]
             }
@@ -96,7 +96,7 @@ export async function parse(
         const replacedCommand: any = replacedCommands.get(event.pid)
         replacedCommands.delete(event.pid)
         if (replacedCommand && activeCommandCompleted) {
-          for (let key of Object.keys(event)) {
+          for (const key of Object.keys(event)) {
             if (!replacedCommand.hasOwnProperty(key)) {
               replacedCommand[key] = event[key]
             }

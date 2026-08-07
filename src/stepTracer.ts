@@ -58,7 +58,7 @@ function generateTraceChartForSteps(job: WorkflowJobType): string {
     '',
     '### Step Trace',
     '',
-    '```mermaid' + '\n' + chartContent + '\n' + '```'
+    `\`\`\`mermaid\n${chartContent}\n\`\`\``
   ]
   return postContentItems.join('\n')
 }
@@ -80,7 +80,7 @@ export async function start(): Promise<boolean> {
   }
 }
 
-export async function finish(currentJob: WorkflowJobType): Promise<boolean> {
+export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
   logger.info(`Finishing step tracer ...`)
 
   try {

@@ -54,7 +54,8 @@ async function getCurrentJob(): Promise<WorkflowJobType | null> {
   } catch (error: any) {
     logger.error(
       `Unable to get current workflow job info. ` +
-        `Please sure that your workflow have "actions:read" permission!`
+        `Please sure that your workflow have "actions:read" permission! ` +
+        `Cause: ${error.message}`
     )
   }
   return null

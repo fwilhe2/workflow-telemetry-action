@@ -9,8 +9,8 @@ import * as logger from './logger'
 
 const PROC_TRACER_PID_KEY = 'PROC_TRACER_PID'
 const PROC_TRACER_OUTPUT_FILE_NAME = 'proc-trace.out'
-const PROC_TRACER_BINARY_NAME_UBUNTU_20: string = 'proc_tracer_ubuntu-20'
-const PROC_TRACER_BINARY_NAME_UBUNTU_22: string = 'proc_tracer_ubuntu-22'
+const PROC_TRACER_BINARY_NAME_UBUNTU_20 = 'proc_tracer_ubuntu-20'
+const PROC_TRACER_BINARY_NAME_UBUNTU_22 = 'proc_tracer_ubuntu-22'
 const DEFAULT_PROC_TRACE_CHART_MAX_COUNT = 100
 const GHA_FILE_NAME_PREFIX = '/home/runner/work/_actions/'
 
@@ -110,7 +110,7 @@ export async function start(): Promise<boolean> {
   }
 }
 
-export async function finish(currentJob: WorkflowJobType): Promise<boolean> {
+export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
   logger.info(`Finishing process tracer ...`)
 
   const procTracePID: string = core.getState(PROC_TRACER_PID_KEY)
@@ -290,7 +290,7 @@ export async function report(
         '',
         `#### Top ${procTraceChartMaxCount} processes with highest duration`,
         '',
-        '```mermaid' + '\n' + chartContent + '\n' + '```'
+        `\`\`\`mermaid\n${chartContent}\n\`\`\``
       )
     }
     if (procTraceTableShow) {
@@ -298,7 +298,7 @@ export async function report(
         '',
         `#### All processes with detail`,
         '',
-        '```' + '\n' + tableContent + '\n' + '```'
+        `\`\`\`\n${tableContent}\n\`\`\``
       )
     }
 

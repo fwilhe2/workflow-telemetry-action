@@ -6,15 +6,15 @@
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
-    "format": "prettier --write **/*.ts",
-    "format-check": "prettier --check **/*.ts",
-    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write \"**/*.ts\"",
+    "format-check": "prettier --check \"**/*.ts\"",
+    "lint": "eslint src",
     "package:main": "ncc build --source-map src/main.ts --out dist/main",
     "package:post": "ncc build --source-map src/post.ts --out dist/post",
     "package:statCollector": "ncc build --source-map src/statCollector.ts --out dist/sc",
     "package:statCollectorWorker": "ncc build --source-map src/statCollectorWorker.ts --out dist/scw",
     "package": "npm run package:main && npm run package:post && npm run package:statCollector && npm run package:statCollectorWorker",
-    "test": "echo \"Warn: no test specified\" && exit 0",
+    "test": "tests/smoke-test.sh",
     "all": "npm run format-check && npm run lint && npm run build && npm run package && npm test"
   },
   "repository": {
@@ -33,26 +33,28 @@
   "author": "Serkan Özal <serkan@thundra.io>",
   "license": "MIT",
   "dependencies": {
-    "@actions/core": "^1.10.0",
-    "@actions/exec": "^1.1.0",
-    "@actions/github": "^5.1.1",
-    "@octokit/action": "^4.0.9",
-    "@octokit/openapi-types": "^14.0.0",
-    "axios": "^1.1.2",
-    "sprintf-js": "^1.1.2",
-    "systeminformation": "^5.11.15"
+    "@actions/core": "^2.0.3",
+    "@actions/exec": "^2.0.0",
+    "@actions/github": "^8.0.1",
+    "@octokit/action": "^6.1.0",
+    "@octokit/openapi-types": "^28.0.0",
+    "axios": "^1.19.0",
+    "sprintf-js": "^1.1.3",
+    "systeminformation": "^5.33.1"
   },
   "devDependencies": {
-    "@types/node": "^16.3.3",
-    "@types/sprintf-js": "^1.1.2",
-    "@typescript-eslint/eslint-plugin": "^5.40.0",
-    "@typescript-eslint/parser": "^5.40.0",
-    "@vercel/ncc": "^0.38.1",
-    "eslint": "^8.25.0",
-    "eslint-plugin-github": "^4.1.1",
-    "eslint-plugin-prettier": "^5.1.3",
-    "js-yaml": "^4.1.0",
-    "prettier": "^3.2.4",
-    "typescript": "^5.3.3"
+    "@types/node": "^24.13.3",
+    "@types/sprintf-js": "^1.1.4",
+    "@vercel/ncc": "^0.44.1",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-github": "^6.1.2",
+    "eslint-plugin-prettier": "^5.5.6",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.66.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
