@@ -48,7 +48,7 @@ and as trace table with the following information:
 - Name
 - Id
 - Parent id
-- User id
+- User
 - Start time
 - Duration (in ms)
 - Exit code
@@ -129,13 +129,10 @@ jobs:
 | `metric_frequency`           | Optional    | Metric collection frequency in seconds. Must be a number. Defaults to `5`.                                                                                                                                                        |
 | `proc_trace_enable`          | Optional    | Set to `false` to skip process tracing. It is the only part of the action that installs anything (`forkstat`, ~5s on x64 and ~9s on arm64) and the only part needing `sudo`. Resource metrics are unaffected. Defaults to `true`. |
 | `proc_trace_min_duration`    | Optional    | Puts minimum limit for process execution duration to be traced. Must be a number. Defaults to `-1` which means process duration filtering is not applied.                                                                         |
-| `proc_trace_sys_enable`      | Optional    | Enables tracing default system processes (`aws`, `cat`, `sed`, ...). Defaults to `false`.                                                                                                                                         |
-| `proc_trace_chart_show`      | Optional    | Enables showing traced processes in trace chart. Defaults to `true`.                                                                                                                                                              |
-| `proc_trace_chart_max_count` | Optional    | Maximum number of processes to be shown in trace chart (applicable if `proc_trace_chart_show` input is `true`). Must be a number. Defaults to `100`.                                                                              |
-| `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `true`.                                                                                                                                                              |
+| `proc_trace_chart_max_count` | Optional    | Maximum number of processes to be shown in trace chart. Must be a number. Defaults to `100`.                                                                                                                                      |
+| `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `false`.                                                                                                                                                             |
 | `comment_on_pr`              | Optional    | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission                                                   |
 | `job_summary`                | Optional    | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`.                                  |
-| `theme`                      | Optional    | **Deprecated and ignored.** Charts are rendered with Mermaid, which follows the reader's GitHub theme automatically.                                                                                                              |
 
 ## Development
 
@@ -160,14 +157,12 @@ smoke tests the bundles. The individual steps are:
 | `npm run lint`               | ESLint over the whole repo                                         |
 | `npm run check:node-version` | Asserts the Node version is declared consistently                  |
 | `npm test`                   | Jest unit tests in `__tests__/`                                    |
-| `npm run package`            | Rebuilds the four bundles in `dist/`                               |
+| `npm run package`            | Rebuilds the three bundles in `dist/`                              |
 | `npm run smoke-test`         | Loads the built bundles and exercises the stat collector over HTTP |
 | `npm run format:write`       | Formats with Prettier                                              |
 
 `dist/` is committed, so **rebuild and commit it with every source change** —
 the `Check Transpiled JavaScript` workflow fails when it drifts from `src/`.
-Note that `dist/proc-tracer/` holds prebuilt binaries that are not generated
-from source, so only the four bundle directories are ever rebuilt.
 
 ### Moving to a new Node version
 
@@ -215,9 +210,10 @@ is an ordinary commit that goes through review and CI like anything else.
 2. Bump `version` in `package.json`.
 3. `npm run all`, then commit — including the rebuilt `dist/`.
 4. Push to `main` and let CI go green.
-5. Run the **Release** workflow (Actions → Release → Run workflow). Tick
-   `dry_run` first if you want to see the version it resolves and confirm the
-   tag is free without publishing anything.
+5. Run the **Release** workflow (Actions → Release → Run workflow) **from the
+   ref you are releasing** — `main` for the current major, `releases/vN` for a
+   fix to an older one. Tick `dry_run` first if you want to see the version it
+   resolves and confirm every check passes without publishing anything.
 
 The workflow then:
 
@@ -225,14 +221,36 @@ The workflow then:
   release can never ship bundles that do not match `src/`
 - runs the unit tests and the smoke test
 - **fails if the tag already exists**, rather than moving it
-- tags `vX.Y.Z`, and force-moves the major tag `vX` to the same commit
-- creates a GitHub release with generated notes
+- **fails if `releases/vN` holds commits the released ref does not**, rather
+  than dropping them
+- tags `vX.Y.Z`, force-moves the major tag `vX`, and fast-forwards the release
+  branch `releases/vX` to the same commit
+- creates a GitHub release with generated notes, marked _Latest_ only if this
+  really is the newest version in the repository
+
+### Tags and branches
+
+Three refs move with a release, and they mean different things:
+
+| Ref           | Moves         | For                                      |
+| ------------- | ------------- | ---------------------------------------- |
+| `v3.1.0`      | never         | pinning an exact version                 |
+| `v3`          | every release | what users reference in `uses:`          |
+| `releases/v3` | every release | where maintenance for that major happens |
 
 The major tag is the one users reference
 (`uses: fwilhe2/workflow-telemetry-action@v3`), which is why it moves with every
 release in that series. Bumping the major means users have to opt in by changing
 their `uses:` line, so reserve it for changes that break existing workflows —
 see 3.0.0 in the changelog for the kind of thing that qualifies.
+
+The release branch is what makes an old major still maintainable once `main` has
+moved on: land the fix on `releases/v3`, bump the version there, and dispatch
+the workflow from that branch. It tags `v3.x.y` and moves `v3`, and it will not
+mark the release _Latest_ while a newer major exists. Releases cut from `main`
+fast-forward the branch instead, so the two stay in sync until a major is
+actually left behind — which is why nothing extra is needed for ordinary
+releases.
 
 It uses the built-in `GITHUB_TOKEN` with `contents: write`; no secrets need
 configuring.

@@ -92,10 +92,30 @@ if ! kill -0 $worker_pid 2>/dev/null; then
   exit 1
 fi
 
-# Give the collector time to record at least one sample.
+# Give the scheduler time to record a few samples on its own.
 sleep 2
+
+# /collect is what the post step calls to capture the tail of the job, so it has
+# to actually record a sample. There is no sleep between the POST and the GET,
+# but do not read this as a test of the ordering guarantee: an HTTP round trip
+# is long enough for a fire-and-forget collect to land anyway, so this passes
+# either way. It catches /collect not collecting, not /collect answering early.
+sample_count() {
+  curl -fsS "http://localhost:$PORT/$1" | node -e "
+    let s = ''
+    process.stdin.on('data', (d) => (s += d))
+    process.stdin.on('end', () => console.log(JSON.parse(s).length))
+  "
+}
+
+before=$(sample_count cpu)
 curl -fsS -X POST -o /dev/null "http://localhost:$PORT/collect"
-sleep 1
+after=$(sample_count cpu)
+if [[ $after -gt $before ]]; then
+  ok "POST /collect recorded a sample ($before -> $after)"
+else
+  bad "POST /collect recorded no sample ($before -> $after)"
+fi
 
 for endpoint in cpu memory network disk disk_size; do
   code=$(curl -s -o /tmp/smoke-body.json -w '%{http_code}' "http://localhost:$PORT/$endpoint")

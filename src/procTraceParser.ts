@@ -3,36 +3,6 @@ import * as readline from 'readline'
 import * as logger from './logger.js'
 import { CompletedCommand, ProcEventParseOptions } from './interfaces/index.js'
 
-const SYS_PROCS_TO_BE_IGNORED: Set<string> = new Set([
-  'awk',
-  'basename',
-  'cat',
-  'cut',
-  'date',
-  'echo',
-  'envsubst',
-  'expr',
-  'dirname',
-  'grep',
-  'head',
-  'id',
-  'ip',
-  'ln',
-  'ls',
-  'lsblk',
-  'mkdir',
-  'mktemp',
-  'mv',
-  'ps',
-  'readlink',
-  'rm',
-  'sed',
-  'seq',
-  'sh',
-  'uname',
-  'whoami'
-])
-
 /**
  * Matches a line of `forkstat -e fork,exec,exit -x` output:
  *
@@ -126,9 +96,6 @@ export async function parse(
 ): Promise<CompletedCommand[]> {
   const minDuration: number =
     (procEventParseOptions && procEventParseOptions.minDuration) || -1
-  const traceSystemProcesses: boolean =
-    (procEventParseOptions && procEventParseOptions.traceSystemProcesses) ||
-    false
   const clock: TraceClock = new TraceClock(
     procEventParseOptions.startedAt ?? new Date()
   )
@@ -180,9 +147,6 @@ export async function parse(
     if (event === 'exec') {
       const { name, fileName, args } = splitCommand(rest)
       if (!name) {
-        continue
-      }
-      if (!traceSystemProcesses && SYS_PROCS_TO_BE_IGNORED.has(name)) {
         continue
       }
       activeCommands.set(pid, {

@@ -32,14 +32,19 @@ the process tracer all changed.
 - The `github_token` input was documented but never read: the client took its
   token from the `GITHUB_TOKEN` environment variable instead, so setting the
   input had no effect. It is now used.
+- `WORKFLOW_TELEMETRY_SERVER_PORT` moved the stat server but not the collector
+  reading from it, which had the port hardcoded, so setting it broke metrics
+  entirely. Both sides read it now.
+- `POST /collect` answered before the sample it triggered had been recorded: it
+  awaited a function that returned an array of promises without awaiting them.
+  The post step calls it to capture the tail of the job and then reads the
+  histograms straight away, so that last sample could be missing from the
+  charts.
 
 ### Changed
 
 - **Runs on Node 24** (`runs.using: node24`); requires a runner with the Node 24
   action runtime.
-- **`theme` is deprecated and ignored.** Mermaid follows the reader's GitHub
-  theme by itself. The input is still accepted so existing workflows keep
-  working.
 - CPU and memory are drawn as one chart per series rather than a stacked area,
   because `xychart` has no legend.
 - The process trace table reports `USER` (a name) instead of a numeric `UID`,
@@ -66,9 +71,31 @@ the process tracer all changed.
   builtins, load, and that the stat collector serves metrics over HTTP.
 - CI runs the action against itself on x64 **and** arm64, and asserts the
   process tracer actually captured events.
+- A `releases/vN` branch per major version, created and fast-forwarded by the
+  `Release` workflow, so an old major can still be fixed after `main` has moved
+  on. The workflow refuses to release if that branch holds commits the released
+  ref does not, and marks a release _Latest_ only when it really is the newest
+  version in the repository.
 
 ### Removed
 
+- **The `theme` input.** It selected a light or dark palette for the chart
+  images that were rendered by the external service; Mermaid follows the
+  reader's own GitHub theme, so there is nothing left for it to choose. A
+  workflow that still passes it gets an "Unexpected input" warning annotation
+  and otherwise runs normally.
+- **The `proc_trace_chart_show` input.** The chart is why the process trace
+  exists, and turning it off still paid for the `forkstat` install and the
+  `sudo`, usually to produce an empty _Process Trace_ heading. Use
+  `proc_trace_enable: false` to skip tracing altogether.
+- **The `proc_trace_sys_enable` input**, and the hardcoded list of 28 process
+  names behind it. It filtered on name alone, so it could not tell a build's own
+  `sh` from a wrapper's, and the list had not been touched since it was written.
+  `proc_trace_min_duration` filters on something real. Traces now include short
+  system processes by default; the chart is unaffected, since it already shows
+  only the longest-running processes.
+- Two collected-but-never-plotted metric fields, `CPUStats.totalLoad` and
+  `MemoryStats.totalMemoryMb`.
 - `dist/sc`, a bundle nothing ever executed. Only `dist/scw` is spawned, and the
   stat collector is bundled into `main`/`post` already.
 - Four runtime dependencies: `axios` (replaced by the built-in `fetch`),

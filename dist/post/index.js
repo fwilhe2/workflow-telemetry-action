@@ -34069,7 +34069,9 @@ async function report$2(currentJob) {
     }
 }
 
-const STAT_SERVER_PORT = 7777;
+// The worker reads the same variable, and inherits this process's environment,
+// so the two cannot disagree about where the stat server lives.
+const STAT_SERVER_PORT = parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || '') || 7777;
 // Mermaid renders every sample as a tick, so a long job would produce an
 // unreadable chart (and a very large summary). Longer runs are downsampled.
 const MAX_CHART_POINTS = 120;
@@ -34327,35 +34329,6 @@ async function report$1(_currentJob) {
     }
 }
 
-const SYS_PROCS_TO_BE_IGNORED = new Set([
-    'awk',
-    'basename',
-    'cat',
-    'cut',
-    'date',
-    'echo',
-    'envsubst',
-    'expr',
-    'dirname',
-    'grep',
-    'head',
-    'id',
-    'ip',
-    'ln',
-    'ls',
-    'lsblk',
-    'mkdir',
-    'mktemp',
-    'mv',
-    'ps',
-    'readlink',
-    'rm',
-    'sed',
-    'seq',
-    'sh',
-    'uname',
-    'whoami'
-]);
 /**
  * Matches a line of `forkstat -e fork,exec,exit -x` output:
  *
@@ -34421,8 +34394,6 @@ function exitCodeOf(waitStatus) {
 }
 async function parse(filePath, procEventParseOptions) {
     const minDuration = (procEventParseOptions && procEventParseOptions.minDuration) || -1;
-    const traceSystemProcesses = (procEventParseOptions && procEventParseOptions.traceSystemProcesses) ||
-        false;
     const clock = new TraceClock(procEventParseOptions.startedAt ?? new Date());
     const fileStream = fs.createReadStream(filePath);
     const rl = readline.createInterface({
@@ -34467,9 +34438,6 @@ async function parse(filePath, procEventParseOptions) {
         if (event === 'exec') {
             const { name, fileName, args } = splitCommand(rest);
             if (!name) {
-                continue;
-            }
-            if (!traceSystemProcesses && SYS_PROCS_TO_BE_IGNORED.has(name)) {
                 continue;
             }
             activeCommands.set(pid, {
@@ -34597,8 +34565,6 @@ async function report(currentJob) {
                 procTraceMinDuration = minProcDurationVal;
             }
         }
-        const procTraceSysEnable = getInput('proc_trace_sys_enable') === 'true';
-        const procTraceChartShow = getInput('proc_trace_chart_show') === 'true';
         const procTraceChartMaxCountInput = parseInt(getInput('proc_trace_chart_max_count'));
         const procTraceChartMaxCount = Number.isInteger(procTraceChartMaxCountInput)
             ? procTraceChartMaxCountInput
@@ -34607,45 +34573,42 @@ async function report(currentJob) {
         const startedAtState = getState(PROC_TRACER_STARTED_AT_KEY);
         const completedCommands = await parse(procTraceOutFilePath, {
             minDuration: procTraceMinDuration,
-            traceSystemProcesses: procTraceSysEnable,
             startedAt: startedAtState ? new Date(startedAtState) : new Date()
         });
         ///////////////////////////////////////////////////////////////////////////
         let chartContent = '';
-        if (procTraceChartShow) {
-            chartContent = chartContent.concat('gantt', '\n');
-            chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n');
-            chartContent = chartContent.concat('\t', `dateFormat x`, '\n');
-            chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n');
-            const filteredCommands = [...completedCommands]
-                .sort((a, b) => {
-                return -(a.duration - b.duration);
-            })
-                .slice(0, procTraceChartMaxCount)
-                .sort((a, b) => {
-                let result = a.startTime - b.startTime;
-                if (result === 0 && a.order && b.order) {
-                    result = a.order - b.order;
-                }
-                return result;
-            });
-            for (const command of filteredCommands) {
-                const extraProcessInfo = getExtraProcessInfo(command);
-                const escapedName = command.name.replace(/:/g, '#colon;');
-                if (extraProcessInfo) {
-                    chartContent = chartContent.concat('\t', `${escapedName} (${extraProcessInfo}) : `);
-                }
-                else {
-                    chartContent = chartContent.concat('\t', `${escapedName} : `);
-                }
-                if (command.exitCode !== 0) {
-                    // to show red
-                    chartContent = chartContent.concat('crit, ');
-                }
-                const startTime = command.startTime;
-                const finishTime = command.startTime + command.duration;
-                chartContent = chartContent.concat(`${Math.min(startTime, finishTime)}, ${finishTime}`, '\n');
+        chartContent = chartContent.concat('gantt', '\n');
+        chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n');
+        chartContent = chartContent.concat('\t', `dateFormat x`, '\n');
+        chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n');
+        const filteredCommands = [...completedCommands]
+            .sort((a, b) => {
+            return -(a.duration - b.duration);
+        })
+            .slice(0, procTraceChartMaxCount)
+            .sort((a, b) => {
+            let result = a.startTime - b.startTime;
+            if (result === 0 && a.order && b.order) {
+                result = a.order - b.order;
             }
+            return result;
+        });
+        for (const command of filteredCommands) {
+            const extraProcessInfo = getExtraProcessInfo(command);
+            const escapedName = command.name.replace(/:/g, '#colon;');
+            if (extraProcessInfo) {
+                chartContent = chartContent.concat('\t', `${escapedName} (${extraProcessInfo}) : `);
+            }
+            else {
+                chartContent = chartContent.concat('\t', `${escapedName} : `);
+            }
+            if (command.exitCode !== 0) {
+                // to show red
+                chartContent = chartContent.concat('crit, ');
+            }
+            const startTime = command.startTime;
+            const finishTime = command.startTime + command.duration;
+            chartContent = chartContent.concat(`${Math.min(startTime, finishTime)}, ${finishTime}`, '\n');
         }
         ///////////////////////////////////////////////////////////////////////////
         let tableContent = '';
@@ -34658,10 +34621,14 @@ async function report(currentJob) {
             tableContent = commandInfos.join('\n');
         }
         ///////////////////////////////////////////////////////////////////////////
-        const postContentItems = ['', '### Process Trace'];
-        if (procTraceChartShow) {
-            postContentItems.push('', `#### Top ${procTraceChartMaxCount} processes with highest duration`, '', `\`\`\`mermaid\n${chartContent}\n\`\`\``);
-        }
+        const postContentItems = [
+            '',
+            '### Process Trace',
+            '',
+            `#### Top ${procTraceChartMaxCount} processes with highest duration`,
+            '',
+            `\`\`\`mermaid\n${chartContent}\n\`\`\``
+        ];
         if (procTraceTableShow) {
             postContentItems.push('', `#### All processes with detail`, '', `\`\`\`\n${tableContent}\n\`\`\``);
         }
