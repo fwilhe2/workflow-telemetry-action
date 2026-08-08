@@ -83,9 +83,48 @@ and as trace table with the following information:
 By default the traces are Mermaid gantt charts and each metric series is its own
 `xychart` block:
 
-![Step Trace Example](/images/step-trace-example.png)
+#### Step Trace Example
 
-![Process Trace Example](/images/proc-trace-example.png)
+```mermaid
+gantt
+ title toybox
+ dateFormat x
+ axisFormat %H:%M:%S
+ Set up job : milestone, 1786188824000, 1786188825000
+ Run actions/checkout@v7 : 1786188825000, 1786188826000
+ Collect Workflow Telemetry : 1786188826000, 1786188831000
+ Run sudo apt-get update && sudo apt-get -y install autoconf automake autopoint autotools-dev binutils binutils-common binutils-x86-64-linux-gnu bsdextrautils build-essential bzip2 cpp cpp-13 cpp-13-x86-64-linux-gnu cpp-x86-64-linux-gnu debhelper debugedit dh-autoreconf dh-strip-nondeterminism dpkg-dev dwz file g++ g++-13 g++-13-x86-64-linux-gnu g++-x86-64-linux-gnu gcc gcc-13 gcc-13-base gcc-13-x86-64-linux-gnu gcc-x86-64-linux-gnu gettext gettext-base groff-base intltool-debian lto-disabled-list m4 make man-db patch perl perl-modules-5.38 po-debconf rpcsvc-proto xz-utils zip : 1786188831000, 1786188839000
+ Run git clone --depth=1 https-//github.com/landley/toybox : 1786188839000, 1786188839000
+ Run cd toybox : 1786188839000, 1786188850000
+
+```
+
+#### Process Trace Example
+
+```mermaid
+gantt
+ title Execution Process Trace (toybox)
+ dateFormat HH:mm:ss
+ axisFormat %M:%S
+
+ section Initialization
+ bash                 : 00:00:00, 19s
+ sudo (apt setup)     : 00:00:00, 4s
+
+ section Dependency Download
+ apt-get              : crit, 00:00:00, 8s
+ https (fetch mirror) : crit, 00:00:00, 2s
+
+ section Compilation & Build
+ make                 : 00:00:09, 11s
+ cc (compile targets) : active, 00:00:10, 11s
+ cc1 (compiler inner) : active, 00:00:10, 9s
+ ld (linker)          : crit, 00:00:10, 1s
+
+ section CI / CD Pipeline
+ git                  : 00:00:09, 10s
+ node (upload-artifact): 00:00:19, 1s
+```
 
 ```mermaid
 xychart-beta
