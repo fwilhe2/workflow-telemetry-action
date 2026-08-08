@@ -32,6 +32,13 @@
   the `#colon;` escape was applied to the process name but not to the action
   name appended after it.
 
+### Security
+
+- The stat collector worker no longer serialises an exception's name and message
+  into its HTTP 500 body (`js/stack-trace-exposure`). The cause still goes to the
+  job log, which is where it is wanted; the only client raises its own error from
+  the status code and never read that body.
+
 ## 3.0.0
 
 First release of this fork. It diverges from

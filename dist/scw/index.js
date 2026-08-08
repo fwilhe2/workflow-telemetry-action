@@ -48702,13 +48702,6 @@ const LOG_HEADER = '[Workflow Telemetry]';
 function info(msg) {
     info$1(`${LOG_HEADER} ${msg}`);
 }
-/**
- * Best-effort message for a value caught by a `catch` block, which TypeScript
- * types as `unknown` because anything at all can be thrown.
- */
-function messageOf(err) {
-    return err instanceof Error ? err.message : String(err);
-}
 function error(msg) {
     if (msg instanceof String || typeof msg === 'string') {
         error$1(`${LOG_HEADER} ${msg}`);
@@ -48940,12 +48933,15 @@ function startHttpServer() {
             }
         }
         catch (error$1) {
+            // The detail goes to the job log and not into the response. Serialising
+            // an exception's name and message over HTTP is what CodeQL flags as
+            // stack-trace exposure, and it buys nothing here: the only client is
+            // `callStatServer` in statCollector.ts, which raises its own error from
+            // the status code and never reads this body. The log is where the cause
+            // is actually wanted, and `logger.error` already puts it there.
             error(error$1);
             response.statusCode = 500;
-            response.end(JSON.stringify({
-                type: error$1 instanceof Error ? error$1.name : typeof error$1,
-                message: messageOf(error$1)
-            }));
+            response.end();
         }
     });
     server.listen(SERVER_PORT, SERVER_HOST, () => {
