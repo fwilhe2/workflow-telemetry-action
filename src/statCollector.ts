@@ -16,6 +16,16 @@ import {
   WorkflowJobType
 } from './interfaces/index.js'
 import * as logger from './logger.js'
+import {
+  ChartMode,
+  SPARKLINE_WIDTH,
+  chartMode,
+  code,
+  formatNumber,
+  markdownTable,
+  sparkline,
+  summarise
+} from './charts.js'
 
 // The worker reads the same variable, and inherits this process's environment,
 // so the two cannot disagree about where the stat server lives.
@@ -25,6 +35,19 @@ const STAT_SERVER_PORT: number =
 // Mermaid renders every sample as a tick, so a long job would produce an
 // unreadable chart (and a very large summary). Longer runs are downsampled.
 const MAX_CHART_POINTS = 120
+
+/**
+ * One series, named once for both renderers. `axis` is the mermaid y-axis
+ * label, which is shared by the two series of a pair; the sparkline table has
+ * no axis and puts the unit on the numbers instead.
+ */
+interface Metric {
+  readonly group: string
+  readonly series: string
+  readonly unit: string
+  readonly axis: string
+  readonly points: ProcessedStats[]
+}
 
 /** Calls the stat collector worker, which listens on localhost. */
 async function callStatServer(
@@ -122,13 +145,51 @@ export function downsample(
   return result
 }
 
-/** Renders a chart only when there is data to plot. */
-function chartFor(
-  title: string,
-  yAxisLabel: string,
-  points: ProcessedStats[]
-): string | null {
-  return points && points.length ? renderChart(title, yAxisLabel, points) : null
+/**
+ * Every metric as one table: sparkline for the shape, peak and mean for the
+ * numbers the sparkline deliberately does not carry. Ten rows of text, and not
+ * one element the browser has to render.
+ */
+export function renderMetricTable(metrics: Metric[]): string {
+  const rows: string[][] = metrics.map((metric) => {
+    const values: number[] = metric.points.map((p) => p.y)
+    const { peak, mean } = summarise(values)
+    const shape: number[] = downsample(metric.points, SPARKLINE_WIDTH).map(
+      (p) => p.y
+    )
+    return [
+      `${metric.group} - ${metric.series}`,
+      code(sparkline(shape)),
+      `${formatNumber(peak)} ${metric.unit}`,
+      `${formatNumber(mean)} ${metric.unit}`
+    ]
+  })
+
+  return markdownTable(
+    ['Metric', 'Trace', 'Peak', 'Mean'],
+    [':--', ':--', '--:', '--:'],
+    rows
+  )
+}
+
+/** One titled chart per series, grouped under the headings mermaid needs. */
+function renderMetricCharts(metrics: Metric[]): string {
+  const items: string[] = []
+  let group = ''
+  for (const metric of metrics) {
+    if (metric.group !== group) {
+      group = metric.group
+      items.push(`### ${group}`)
+    }
+    items.push(
+      renderChart(
+        `${metric.group} - ${metric.series} (${metric.unit})`,
+        metric.axis,
+        metric.points
+      )
+    )
+  }
+  return items.join('\n')
 }
 
 async function reportWorkflowMetrics(): Promise<string> {
@@ -138,50 +199,43 @@ async function reportWorkflowMetrics(): Promise<string> {
   const { diskReadX, diskWriteX } = await getDiskStats()
   const { diskAvailableX, diskUsedX } = await getDiskSizeStats()
 
-  const sections: Array<{ heading: string; charts: Array<string | null> }> = [
-    {
-      heading: '### CPU Metrics',
-      charts: [
-        chartFor('CPU Load - User (%)', 'Load (%)', userLoadX),
-        chartFor('CPU Load - System (%)', 'Load (%)', systemLoadX)
-      ]
-    },
-    {
-      heading: '### Memory Metrics',
-      charts: [
-        chartFor('Memory Usage - Used (MB)', 'Memory (MB)', activeMemoryX),
-        chartFor('Memory Usage - Free (MB)', 'Memory (MB)', availableMemoryX)
-      ]
-    },
-    {
-      heading: '### IO Metrics',
-      charts: [
-        chartFor('Network I/O - Read (MB)', 'Network (MB)', networkReadX),
-        chartFor('Network I/O - Write (MB)', 'Network (MB)', networkWriteX),
-        chartFor('Disk I/O - Read (MB)', 'Disk (MB)', diskReadX),
-        chartFor('Disk I/O - Write (MB)', 'Disk (MB)', diskWriteX)
-      ]
-    },
-    {
-      heading: '### Disk Size Metrics',
-      charts: [
-        chartFor('Disk Usage - Used (MB)', 'Disk (MB)', diskUsedX),
-        chartFor('Disk Usage - Free (MB)', 'Disk (MB)', diskAvailableX)
-      ]
-    }
-  ]
+  const cpu = 'Load (%)'
+  const memory = 'Memory (MB)'
+  const network = 'Network (MB)'
+  const disk = 'Disk (MB)'
 
-  const postContentItems: string[] = []
-  for (const section of sections) {
-    const rendered: string[] = section.charts.filter(
-      (c): c is string => c !== null
-    )
-    if (rendered.length) {
-      postContentItems.push(section.heading, ...rendered)
-    }
+  const metric = (
+    group: string,
+    series: string,
+    unit: string,
+    axis: string,
+    points: ProcessedStats[]
+  ): Metric => ({ group, series, unit, axis, points })
+
+  // A series with no samples has nothing to draw and no peak to report: a job
+  // shorter than one collection interval produces several of these.
+  const metrics: Metric[] = [
+    metric('CPU', 'user', '%', cpu, userLoadX),
+    metric('CPU', 'system', '%', cpu, systemLoadX),
+    metric('Memory', 'used', 'MB', memory, activeMemoryX),
+    metric('Memory', 'free', 'MB', memory, availableMemoryX),
+    metric('Network I/O', 'read', 'MB', network, networkReadX),
+    metric('Network I/O', 'write', 'MB', network, networkWriteX),
+    metric('Disk I/O', 'read', 'MB', disk, diskReadX),
+    metric('Disk I/O', 'write', 'MB', disk, diskWriteX),
+    metric('Disk usage', 'used', 'MB', disk, diskUsedX),
+    metric('Disk usage', 'free', 'MB', disk, diskAvailableX)
+  ].filter((m) => m.points && m.points.length)
+
+  if (!metrics.length) {
+    return ''
   }
 
-  return postContentItems.join('\n')
+  const mode: ChartMode = chartMode()
+  if (mode === 'mermaid') {
+    return renderMetricCharts(metrics)
+  }
+  return ['### Resource Metrics', '', renderMetricTable(metrics), ''].join('\n')
 }
 
 async function getCPUStats(): Promise<ProcessedCPUStats> {

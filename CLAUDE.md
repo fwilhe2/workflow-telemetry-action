@@ -85,11 +85,35 @@ State is handed from `main` to `post` through `core.saveState`/`getState`
 
 ### Rendering
 
-All output is **Mermaid**, which GitHub renders natively: gantt charts for the
-step and process traces, `xychart-beta` for resource metrics. There is no chart
-service — a previous one was called over HTTP and disappeared, breaking every
-chart. Do not reintroduce an external renderer. `xychart-beta` has no legend, so
-multi-series metrics are drawn as one chart per series.
+There are two renderers, chosen by the `charts` input, and `src/charts.ts` holds
+what they share. There is no chart _service_ in either — a previous one was
+called over HTTP and disappeared, breaking every chart. Do not reintroduce an
+external renderer.
+
+**`mermaid` is the default** and what the action has always emitted: gantt for
+the step and process traces, `xychart-beta` for resource metrics. `xychart-beta`
+has no legend, so multi-series metrics are drawn as one chart per series — which
+is where three of every four blocks come from.
+
+**`sparkline` exists for one specific failure, and it is the page rather than
+the runner.** GitHub renders every mermaid block in its own sandboxed iframe
+from `viewscreen.githubusercontent.com`, which loads mermaid.js and lays the
+diagram out client-side. A dozen of those per job is nothing; the run summary
+page concatenates _every_ job's summary, so a large matrix multiplies the iframe
+count by the job count and the page dies while the data is still perfectly good.
+Text costs nothing there. It is not the default because it trades real axes and
+real values for eight levels of block character, and most workflows run few
+enough jobs to never pay the iframe cost.
+
+The rule that follows: **anything added to the summary needs a text form as well
+as a mermaid one.** A mermaid-only section puts the large-matrix case back where
+it started, and that is the case `sparkline` exists to answer.
+
+Both renderers consume the same data, so a series is named once: `Metric` in
+`statCollector.ts` carries the group, series and unit for the table and the axis
+label mermaid additionally needs. `renderMetricTable`, `renderStepTable` and
+`renderProcessTable` are exported for the tests, which is the only place the two
+forms are compared.
 
 ### Process tracing
 

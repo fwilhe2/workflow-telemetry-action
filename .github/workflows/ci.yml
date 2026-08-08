@@ -97,16 +97,24 @@ jobs:
 
   # Runs the action on itself, so a release cannot ship a dist/ bundle that
   # builds but blows up inside a real workflow.
+  #
+  # The two legs render differently on purpose: arm64 asks for `sparkline`,
+  # which is not the default and would otherwise only ever run in the unit
+  # tests. Which arch gets which is arbitrary — that both run every time is not.
+  # The job above passes no `charts` input at all, which is what covers the
+  # third case, an unset input falling back to `mermaid`.
   test-action:
-    name: GitHub Actions Test (${{ matrix.arch }})
+    name: GitHub Actions Test (${{ matrix.arch }}, ${{ matrix.charts }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
             arch: x64
+            charts: mermaid
           - runner: ubuntu-24.04-arm
             arch: arm64
+            charts: sparkline
     runs-on: ${{ matrix.runner }}
     permissions:
       actions: read
@@ -123,6 +131,7 @@ jobs:
         with:
           comment_on_pr: false
           proc_trace_table_show: true
+          charts: ${{ matrix.charts }}
 
       - name: Do some work worth measuring
         id: workload

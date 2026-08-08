@@ -8,6 +8,14 @@ import * as core from '@actions/core'
 import { parse } from './procTraceParser.js'
 import { CompletedCommand, WorkflowJobType } from './interfaces/index.js'
 import * as logger from './logger.js'
+import {
+  cell,
+  chartMode,
+  code,
+  formatDuration,
+  markdownTable,
+  timelineBar
+} from './charts.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -109,6 +117,50 @@ function formatRow(
     String(exitCode).padStart(10),
     command
   ].join(' ')
+}
+
+/** How a process is named in either renderer. */
+function processLabel(command: CompletedCommand): string {
+  const extraProcessInfo: string | null = getExtraProcessInfo(command)
+  return extraProcessInfo
+    ? `${command.name} (${extraProcessInfo})`
+    : command.name
+}
+
+/** The gantt as text: one row per process, placed along the traced span. */
+export function renderProcessTable(commands: CompletedCommand[]): string {
+  if (!commands.length) {
+    return ''
+  }
+
+  const traceStart: number = Math.min(...commands.map((c) => c.startTime))
+  const traceEnd: number = Math.max(
+    ...commands.map((c) => c.startTime + c.duration)
+  )
+  const span: number = Math.max(1, traceEnd - traceStart)
+
+  const rows: string[][] = commands.map((command) => {
+    const label: string =
+      command.exitCode !== 0
+        ? `${cell(processLabel(command))} _(exit ${command.exitCode})_`
+        : cell(processLabel(command))
+    return [
+      label,
+      formatDuration(command.duration),
+      code(
+        timelineBar(
+          (command.startTime - traceStart) / span,
+          (command.startTime + command.duration - traceStart) / span
+        )
+      )
+    ]
+  })
+
+  return markdownTable(
+    ['Process', 'Duration', `Timeline (${formatDuration(span)})`],
+    [':--', '--:', ':--'],
+    rows
+  )
 }
 
 function getExtraProcessInfo(command: CompletedCommand): string | null {
@@ -264,13 +316,6 @@ export async function report(
 
     ///////////////////////////////////////////////////////////////////////////
 
-    let chartContent = ''
-
-    chartContent = chartContent.concat('gantt', '\n')
-    chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n')
-    chartContent = chartContent.concat('\t', `dateFormat x`, '\n')
-    chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n')
-
     const filteredCommands: CompletedCommand[] = [...completedCommands]
       .sort((a: CompletedCommand, b: CompletedCommand) => {
         return -(a.duration - b.duration)
@@ -284,28 +329,35 @@ export async function report(
         return result
       })
 
-    for (const command of filteredCommands) {
-      const extraProcessInfo: string | null = getExtraProcessInfo(command)
-      const escapedName = command.name.replace(/:/g, '#colon;')
-      if (extraProcessInfo) {
-        chartContent = chartContent.concat(
-          '\t',
-          `${escapedName} (${extraProcessInfo}) : `
-        )
-      } else {
+    let traceContent: string
+
+    if (chartMode() === 'mermaid') {
+      let chartContent = ''
+
+      chartContent = chartContent.concat('gantt', '\n')
+      chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n')
+      chartContent = chartContent.concat('\t', `dateFormat x`, '\n')
+      chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n')
+
+      for (const command of filteredCommands) {
+        const escapedName = processLabel(command).replace(/:/g, '#colon;')
         chartContent = chartContent.concat('\t', `${escapedName} : `)
-      }
-      if (command.exitCode !== 0) {
-        // to show red
-        chartContent = chartContent.concat('crit, ')
+        if (command.exitCode !== 0) {
+          // to show red
+          chartContent = chartContent.concat('crit, ')
+        }
+
+        const startTime: number = command.startTime
+        const finishTime: number = command.startTime + command.duration
+        chartContent = chartContent.concat(
+          `${Math.min(startTime, finishTime)}, ${finishTime}`,
+          '\n'
+        )
       }
 
-      const startTime: number = command.startTime
-      const finishTime: number = command.startTime + command.duration
-      chartContent = chartContent.concat(
-        `${Math.min(startTime, finishTime)}, ${finishTime}`,
-        '\n'
-      )
+      traceContent = `\`\`\`mermaid\n${chartContent}\n\`\`\``
+    } else {
+      traceContent = renderProcessTable(filteredCommands)
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -354,7 +406,7 @@ export async function report(
       '',
       `#### Top ${procTraceChartMaxCount} processes with highest duration`,
       '',
-      `\`\`\`mermaid\n${chartContent}\n\`\`\``
+      traceContent
     ]
     if (procTraceTableShow) {
       postContentItems.push(

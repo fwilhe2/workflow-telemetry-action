@@ -261,14 +261,15 @@ function startHttpServer(): void {
           }
         }
       } catch (error) {
+        // The detail goes to the job log and not into the response. Serialising
+        // an exception's name and message over HTTP is what CodeQL flags as
+        // stack-trace exposure, and it buys nothing here: the only client is
+        // `callStatServer` in statCollector.ts, which raises its own error from
+        // the status code and never reads this body. The log is where the cause
+        // is actually wanted, and `logger.error` already puts it there.
         logger.error(error)
         response.statusCode = 500
-        response.end(
-          JSON.stringify({
-            type: error instanceof Error ? error.name : typeof error,
-            message: logger.messageOf(error)
-          })
-        )
+        response.end()
       }
     }
   )

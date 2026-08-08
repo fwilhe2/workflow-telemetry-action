@@ -33991,6 +33991,207 @@ function error(msg) {
     }
 }
 
+const CHART_MODES = ['sparkline', 'mermaid'];
+/** Lowest to highest. `▁` is not blank — an absent sample draws nothing. */
+const BLOCKS = '▁▂▃▄▅▆▇█';
+/** Filled and empty cells of a timeline bar. */
+const BAR_FILLED = '█';
+const BAR_EMPTY = '░';
+/** Columns a sparkline is downsampled to, so table rows stay aligned. */
+const SPARKLINE_WIDTH = 60;
+/** Columns a timeline bar spans. */
+const TIMELINE_WIDTH = 30;
+const DEFAULT_CHART_MODE = 'mermaid';
+function chartMode() {
+    const input = getInput('charts').trim().toLowerCase();
+    if (!input) {
+        return DEFAULT_CHART_MODE;
+    }
+    if (!CHART_MODES.includes(input)) {
+        // Falling back silently would render the opposite of what was asked for,
+        // and the only symptom would be a summary that looks fine.
+        error(`Unknown 'charts' value '${input}'. ` +
+            `Expected one of ${CHART_MODES.join(', ')}. ` +
+            `Using '${DEFAULT_CHART_MODE}'.`);
+        return DEFAULT_CHART_MODE;
+    }
+    return input;
+}
+/**
+ * Draws `values` as block characters scaled between the series' own minimum and
+ * maximum, so the shape is visible whatever the absolute numbers are. The
+ * caller reports those numbers separately — a sparkline is a shape, not a
+ * measurement.
+ */
+function sparkline(values) {
+    if (!values.length) {
+        return '';
+    }
+    const { min, max } = extremesOf(values);
+    if (min === max) {
+        // A flat series has no shape, and where it is drawn is a choice. At the
+        // bottom it reads as idle, which is right for the flat zero an untouched
+        // disk or NIC reports and wrong for a job that sat at 100% CPU throughout.
+        // So zero goes to the floor and anything else mid-height, with the peak
+        // column carrying the value either way.
+        const level = max === 0 ? 0 : Math.floor((BLOCKS.length - 1) / 2);
+        return BLOCKS[level].repeat(values.length);
+    }
+    const scale = (BLOCKS.length - 1) / (max - min);
+    return values.map((v) => BLOCKS[Math.round((v - min) * scale)]).join('');
+}
+/**
+ * Draws one span of a timeline as a bar of `width` cells: the text form of a
+ * gantt row. `start` and `end` are fractions of the whole timeline.
+ *
+ * A span shorter than one cell still gets one, because a step that ran is worth
+ * distinguishing from one that did not.
+ */
+function timelineBar(start, end, width = TIMELINE_WIDTH) {
+    const clamp = (v) => Math.min(1, Math.max(0, v));
+    // A span starting at the very end floors to `width`, which would leave no
+    // room for the cell the next line guarantees and overrun the bar.
+    const from = Math.min(width - 1, Math.floor(clamp(start) * width));
+    const to = Math.ceil(clamp(end) * width);
+    const filled = Math.max(1, Math.min(width - from, to - from));
+    return (BAR_EMPTY.repeat(from) +
+        BAR_FILLED.repeat(filled) +
+        BAR_EMPTY.repeat(Math.max(0, width - from - filled)));
+}
+/** Peak and mean of the *full* series — downsampling would flatten a spike. */
+function summarise(values) {
+    if (!values.length) {
+        return { peak: 0, mean: 0 };
+    }
+    let sum = 0;
+    for (const v of values) {
+        sum += v;
+    }
+    return { peak: extremesOf(values).max, mean: sum / values.length };
+}
+/**
+ * `Math.min(...values)` blows the stack on a long enough series, and these are
+ * undownsampled samples of a job that may have run for an hour.
+ */
+function extremesOf(values) {
+    let min = values[0];
+    let max = values[0];
+    for (const v of values) {
+        if (v < min)
+            min = v;
+        if (v > max)
+            max = v;
+    }
+    return { min, max };
+}
+/** Renders a markdown table. `align` is one of `:--`, `--:` or `:-:` per column. */
+function markdownTable(headers, align, rows) {
+    return [
+        `| ${headers.join(' | ')} |`,
+        `| ${align.join(' | ')} |`,
+        ...rows.map((cells) => `| ${cells.join(' | ')} |`)
+    ].join('\n');
+}
+/**
+ * Escapes what would otherwise end a table cell early.
+ *
+ * The backslash pass has to come first and is not decoration: escaping only the
+ * pipe turns an input backslash immediately before one into `\\|`, which the
+ * row scanner reads as an escaped backslash followed by a live delimiter, so
+ * the cell splits anyway and the row breaks. Escaping the backslashes first
+ * makes that `\\\|` — a literal backslash, then an escaped pipe.
+ */
+function escapeCell(text) {
+    return text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+}
+/**
+ * Wraps text so a table cell keeps monospace alignment, and stays one cell.
+ * GFM resolves table delimiters before inline spans, so an escaped pipe is
+ * still needed inside the backticks.
+ */
+function code(text) {
+    return `\`${escapeCell(text)}\``;
+}
+/** Table cells cannot contain a newline, and `|` would start a new column. */
+function cell(text) {
+    return escapeCell(text).replace(/\r?\n/g, ' ');
+}
+function formatNumber(value) {
+    if (value === 0) {
+        return '0';
+    }
+    if (Math.abs(value) >= 100) {
+        return value.toFixed(0);
+    }
+    if (Math.abs(value) >= 1) {
+        return value.toFixed(1);
+    }
+    return value.toFixed(2);
+}
+/** Milliseconds as the shortest form that stays readable. */
+function formatDuration(ms) {
+    if (ms < 1000) {
+        return `${Math.round(ms)}ms`;
+    }
+    const seconds = ms / 1000;
+    if (seconds < 60) {
+        return `${seconds.toFixed(1)}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+}
+
+function timedStepsOf(job) {
+    const steps = [];
+    for (const step of job.steps || []) {
+        if (!step.started_at || !step.completed_at) {
+            continue;
+        }
+        const startTime = new Date(step.started_at).getTime();
+        const finishTime = new Date(step.completed_at).getTime();
+        steps.push({
+            name: step.name,
+            // The API has been seen to report a completion before the start; the
+            // gantt path has always clamped it, and the table has the same problem.
+            startTime: Math.min(startTime, finishTime),
+            finishTime,
+            conclusion: step.conclusion
+        });
+    }
+    return steps;
+}
+/**
+ * The step trace as text: one row per step, with a bar placed along the job's
+ * own span. It is the same picture the gantt draws, at no rendering cost.
+ */
+function renderStepTable(job) {
+    const steps = timedStepsOf(job);
+    if (!steps.length) {
+        return '';
+    }
+    const jobStart = Math.min(...steps.map((s) => s.startTime));
+    const jobEnd = Math.max(...steps.map((s) => s.finishTime));
+    // Every step of a job that took no measurable time still gets a full bar
+    // rather than a division by zero.
+    const span = Math.max(1, jobEnd - jobStart);
+    const rows = steps.map((step) => {
+        const label = step.conclusion === 'failure' || step.conclusion === 'skipped'
+            ? `${cell(step.name)} _(${step.conclusion})_`
+            : cell(step.name);
+        return [
+            label,
+            formatDuration(step.finishTime - step.startTime),
+            code(timelineBar((step.startTime - jobStart) / span, (step.finishTime - jobStart) / span))
+        ];
+    });
+    return [
+        '',
+        '### Step Trace',
+        '',
+        markdownTable(['Step', 'Duration', `Timeline (${formatDuration(jobEnd - jobStart)})`], [':--', '--:', ':--'], rows),
+        ''
+    ].join('\n');
+}
 function generateTraceChartForSteps(job) {
     let chartContent = '';
     /**
@@ -34058,7 +34259,9 @@ async function report$2(currentJob) {
         return null;
     }
     try {
-        const postContent = generateTraceChartForSteps(currentJob);
+        const postContent = chartMode() === 'mermaid'
+            ? generateTraceChartForSteps(currentJob)
+            : renderStepTable(currentJob);
         info(`Reported step tracer result`);
         return postContent;
     }
@@ -34144,9 +34347,37 @@ function downsample(points, limit) {
     }
     return result;
 }
-/** Renders a chart only when there is data to plot. */
-function chartFor(title, yAxisLabel, points) {
-    return points && points.length ? renderChart(title, yAxisLabel, points) : null;
+/**
+ * Every metric as one table: sparkline for the shape, peak and mean for the
+ * numbers the sparkline deliberately does not carry. Ten rows of text, and not
+ * one element the browser has to render.
+ */
+function renderMetricTable(metrics) {
+    const rows = metrics.map((metric) => {
+        const values = metric.points.map((p) => p.y);
+        const { peak, mean } = summarise(values);
+        const shape = downsample(metric.points, SPARKLINE_WIDTH).map((p) => p.y);
+        return [
+            `${metric.group} - ${metric.series}`,
+            code(sparkline(shape)),
+            `${formatNumber(peak)} ${metric.unit}`,
+            `${formatNumber(mean)} ${metric.unit}`
+        ];
+    });
+    return markdownTable(['Metric', 'Trace', 'Peak', 'Mean'], [':--', ':--', '--:', '--:'], rows);
+}
+/** One titled chart per series, grouped under the headings mermaid needs. */
+function renderMetricCharts(metrics) {
+    const items = [];
+    let group = '';
+    for (const metric of metrics) {
+        if (metric.group !== group) {
+            group = metric.group;
+            items.push(`### ${group}`);
+        }
+        items.push(renderChart(`${metric.group} - ${metric.series} (${metric.unit})`, metric.axis, metric.points));
+    }
+    return items.join('\n');
 }
 async function reportWorkflowMetrics() {
     const { userLoadX, systemLoadX } = await getCPUStats();
@@ -34154,46 +34385,33 @@ async function reportWorkflowMetrics() {
     const { networkReadX, networkWriteX } = await getNetworkStats();
     const { diskReadX, diskWriteX } = await getDiskStats();
     const { diskAvailableX, diskUsedX } = await getDiskSizeStats();
-    const sections = [
-        {
-            heading: '### CPU Metrics',
-            charts: [
-                chartFor('CPU Load - User (%)', 'Load (%)', userLoadX),
-                chartFor('CPU Load - System (%)', 'Load (%)', systemLoadX)
-            ]
-        },
-        {
-            heading: '### Memory Metrics',
-            charts: [
-                chartFor('Memory Usage - Used (MB)', 'Memory (MB)', activeMemoryX),
-                chartFor('Memory Usage - Free (MB)', 'Memory (MB)', availableMemoryX)
-            ]
-        },
-        {
-            heading: '### IO Metrics',
-            charts: [
-                chartFor('Network I/O - Read (MB)', 'Network (MB)', networkReadX),
-                chartFor('Network I/O - Write (MB)', 'Network (MB)', networkWriteX),
-                chartFor('Disk I/O - Read (MB)', 'Disk (MB)', diskReadX),
-                chartFor('Disk I/O - Write (MB)', 'Disk (MB)', diskWriteX)
-            ]
-        },
-        {
-            heading: '### Disk Size Metrics',
-            charts: [
-                chartFor('Disk Usage - Used (MB)', 'Disk (MB)', diskUsedX),
-                chartFor('Disk Usage - Free (MB)', 'Disk (MB)', diskAvailableX)
-            ]
-        }
-    ];
-    const postContentItems = [];
-    for (const section of sections) {
-        const rendered = section.charts.filter((c) => c !== null);
-        if (rendered.length) {
-            postContentItems.push(section.heading, ...rendered);
-        }
+    const cpu = 'Load (%)';
+    const memory = 'Memory (MB)';
+    const network = 'Network (MB)';
+    const disk = 'Disk (MB)';
+    const metric = (group, series, unit, axis, points) => ({ group, series, unit, axis, points });
+    // A series with no samples has nothing to draw and no peak to report: a job
+    // shorter than one collection interval produces several of these.
+    const metrics = [
+        metric('CPU', 'user', '%', cpu, userLoadX),
+        metric('CPU', 'system', '%', cpu, systemLoadX),
+        metric('Memory', 'used', 'MB', memory, activeMemoryX),
+        metric('Memory', 'free', 'MB', memory, availableMemoryX),
+        metric('Network I/O', 'read', 'MB', network, networkReadX),
+        metric('Network I/O', 'write', 'MB', network, networkWriteX),
+        metric('Disk I/O', 'read', 'MB', disk, diskReadX),
+        metric('Disk I/O', 'write', 'MB', disk, diskWriteX),
+        metric('Disk usage', 'used', 'MB', disk, diskUsedX),
+        metric('Disk usage', 'free', 'MB', disk, diskAvailableX)
+    ].filter((m) => m.points && m.points.length);
+    if (!metrics.length) {
+        return '';
     }
-    return postContentItems.join('\n');
+    const mode = chartMode();
+    if (mode === 'mermaid') {
+        return renderMetricCharts(metrics);
+    }
+    return ['### Resource Metrics', '', renderMetricTable(metrics), ''].join('\n');
 }
 async function getCPUStats() {
     const userLoadX = [];
@@ -34511,6 +34729,33 @@ function formatRow(ts, name, user, pid, ppid, startTime, duration, exitCode, com
         command
     ].join(' ');
 }
+/** How a process is named in either renderer. */
+function processLabel(command) {
+    const extraProcessInfo = getExtraProcessInfo(command);
+    return extraProcessInfo
+        ? `${command.name} (${extraProcessInfo})`
+        : command.name;
+}
+/** The gantt as text: one row per process, placed along the traced span. */
+function renderProcessTable(commands) {
+    if (!commands.length) {
+        return '';
+    }
+    const traceStart = Math.min(...commands.map((c) => c.startTime));
+    const traceEnd = Math.max(...commands.map((c) => c.startTime + c.duration));
+    const span = Math.max(1, traceEnd - traceStart);
+    const rows = commands.map((command) => {
+        const label = command.exitCode !== 0
+            ? `${cell(processLabel(command))} _(exit ${command.exitCode})_`
+            : cell(processLabel(command));
+        return [
+            label,
+            formatDuration(command.duration),
+            code(timelineBar((command.startTime - traceStart) / span, (command.startTime + command.duration - traceStart) / span))
+        ];
+    });
+    return markdownTable(['Process', 'Duration', `Timeline (${formatDuration(span)})`], [':--', '--:', ':--'], rows);
+}
 function getExtraProcessInfo(command) {
     // Check whether this is node process with args
     if (command.name === 'node' && command.args.length > 1) {
@@ -34576,11 +34821,6 @@ async function report(currentJob) {
             startedAt: startedAtState ? new Date(startedAtState) : new Date()
         });
         ///////////////////////////////////////////////////////////////////////////
-        let chartContent = '';
-        chartContent = chartContent.concat('gantt', '\n');
-        chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n');
-        chartContent = chartContent.concat('\t', `dateFormat x`, '\n');
-        chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n');
         const filteredCommands = [...completedCommands]
             .sort((a, b) => {
             return -(a.duration - b.duration);
@@ -34593,22 +34833,28 @@ async function report(currentJob) {
             }
             return result;
         });
-        for (const command of filteredCommands) {
-            const extraProcessInfo = getExtraProcessInfo(command);
-            const escapedName = command.name.replace(/:/g, '#colon;');
-            if (extraProcessInfo) {
-                chartContent = chartContent.concat('\t', `${escapedName} (${extraProcessInfo}) : `);
-            }
-            else {
+        let traceContent;
+        if (chartMode() === 'mermaid') {
+            let chartContent = '';
+            chartContent = chartContent.concat('gantt', '\n');
+            chartContent = chartContent.concat('\t', `title ${currentJob.name}`, '\n');
+            chartContent = chartContent.concat('\t', `dateFormat x`, '\n');
+            chartContent = chartContent.concat('\t', `axisFormat %H:%M:%S`, '\n');
+            for (const command of filteredCommands) {
+                const escapedName = processLabel(command).replace(/:/g, '#colon;');
                 chartContent = chartContent.concat('\t', `${escapedName} : `);
+                if (command.exitCode !== 0) {
+                    // to show red
+                    chartContent = chartContent.concat('crit, ');
+                }
+                const startTime = command.startTime;
+                const finishTime = command.startTime + command.duration;
+                chartContent = chartContent.concat(`${Math.min(startTime, finishTime)}, ${finishTime}`, '\n');
             }
-            if (command.exitCode !== 0) {
-                // to show red
-                chartContent = chartContent.concat('crit, ');
-            }
-            const startTime = command.startTime;
-            const finishTime = command.startTime + command.duration;
-            chartContent = chartContent.concat(`${Math.min(startTime, finishTime)}, ${finishTime}`, '\n');
+            traceContent = `\`\`\`mermaid\n${chartContent}\n\`\`\``;
+        }
+        else {
+            traceContent = renderProcessTable(filteredCommands);
         }
         ///////////////////////////////////////////////////////////////////////////
         let tableContent = '';
@@ -34627,7 +34873,7 @@ async function report(currentJob) {
             '',
             `#### Top ${procTraceChartMaxCount} processes with highest duration`,
             '',
-            `\`\`\`mermaid\n${chartContent}\n\`\`\``
+            traceContent
         ];
         if (procTraceTableShow) {
             postContentItems.push('', `#### All processes with detail`, '', `\`\`\`\n${tableContent}\n\`\`\``);
