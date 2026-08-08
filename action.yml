@@ -8,13 +8,14 @@ inputs:
     required: false
   charts:
     description:
-      "How the traces and metrics are drawn. 'sparkline' renders them as text —
-      Unicode block characters in a markdown table — which costs the page
-      nothing. 'mermaid' renders them as diagrams, each of which GitHub loads in
-      its own iframe; a summary page holding a matrix worth of those is slow to
-      the point of being unusable, so prefer it for a single job under
-      investigation. Defaults to 'sparkline'."
-    default: 'sparkline'
+      "How the traces and metrics are drawn. 'mermaid' renders them as diagrams,
+      with real axes and a gantt on a wall clock. 'sparkline' renders them as
+      text — Unicode block characters in a markdown table — which trades
+      resolution for costing the page nothing: GitHub loads every mermaid block
+      in its own iframe, and a run summary page concatenating a large matrix
+      worth of those becomes unusable. Switch on workflows with dozens of jobs.
+      Defaults to 'mermaid'."
+    default: 'mermaid'
     required: false
   metric_frequency:
     description:

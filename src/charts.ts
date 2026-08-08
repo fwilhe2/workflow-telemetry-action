@@ -4,20 +4,23 @@ import * as logger from './logger.js'
 /**
  * How the traces and metrics are drawn.
  *
- * `mermaid` is what this action has always emitted, and it is expensive on the
- * page rather than on the runner: GitHub renders every mermaid block in its own
- * sandboxed iframe served from `viewscreen.githubusercontent.com`, which loads
- * mermaid.js and lays the diagram out client-side. One job costs a dozen of
- * those, which is fine. A workflow whose matrix runs to dozens of jobs is not:
- * the run summary page concatenates every job's summary, so the iframes
- * multiply by the job count and the page stops being usable long before the
- * data stops being interesting.
+ * `mermaid` is the default and what this action has always emitted: real axes,
+ * real values, and a gantt that places spans on a wall clock. For the handful
+ * of jobs a typical workflow runs it is the better answer, and it is what the
+ * charts were brought back for.
  *
  * `sparkline` draws the same series as text — Unicode block characters in a
- * markdown table — which costs no iframes, no JavaScript and no layout. It
- * answers the question these charts are usually asked ("did this job peg the
- * CPU, or sit on I/O?") and it is the default for that reason. Reach for
- * `mermaid` on the one job being investigated, not across a matrix.
+ * markdown table — and exists for one specific failure. GitHub renders every
+ * mermaid block in its own sandboxed iframe served from
+ * `viewscreen.githubusercontent.com`, which loads mermaid.js and lays the
+ * diagram out client-side. This action emits about a dozen blocks per job,
+ * which is nothing on a job page; the run summary page concatenates *every*
+ * job's summary, so a large matrix multiplies that by the job count. Past a few
+ * dozen jobs the page stops being usable while the data behind it is still
+ * perfectly good, and text is what makes it readable again.
+ *
+ * The trade is resolution for cost: eight levels and no axis, against no
+ * iframes at all. Reach for it when the run page is the problem.
  */
 export type ChartMode = 'sparkline' | 'mermaid'
 
@@ -36,19 +39,22 @@ export const SPARKLINE_WIDTH = 60
 /** Columns a timeline bar spans. */
 export const TIMELINE_WIDTH = 30
 
+const DEFAULT_CHART_MODE: ChartMode = 'mermaid'
+
 export function chartMode(): ChartMode {
   const input: string = core.getInput('charts').trim().toLowerCase()
   if (!input) {
-    return 'sparkline'
+    return DEFAULT_CHART_MODE
   }
   if (!CHART_MODES.includes(input)) {
     // Falling back silently would render the opposite of what was asked for,
     // and the only symptom would be a summary that looks fine.
     logger.error(
       `Unknown 'charts' value '${input}'. ` +
-        `Expected one of ${CHART_MODES.join(', ')}. Using 'sparkline'.`
+        `Expected one of ${CHART_MODES.join(', ')}. ` +
+        `Using '${DEFAULT_CHART_MODE}'.`
     )
-    return 'sparkline'
+    return DEFAULT_CHART_MODE
   }
   return input as ChartMode
 }

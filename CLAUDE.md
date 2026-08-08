@@ -90,22 +90,24 @@ what they share. There is no chart _service_ in either — a previous one was
 called over HTTP and disappeared, breaking every chart. Do not reintroduce an
 external renderer.
 
-**`sparkline` is the default, and the reason is the page rather than the
-runner.** GitHub renders every mermaid block in its own sandboxed iframe from
-`viewscreen.githubusercontent.com`, which loads mermaid.js and lays the diagram
-out client-side. A dozen of those per job is fine; the run summary page
-concatenates _every_ job's summary, so a matrix multiplies the iframe count by
-the job count and the page dies while the data is still perfectly good. Text
-costs nothing and answers the question these charts are actually asked. So:
-**anything added to the summary must have a text form, and it must be the
-default.** A new mermaid-only section reintroduces the problem for everyone
-running a matrix.
+**`mermaid` is the default** and what the action has always emitted: gantt for
+the step and process traces, `xychart-beta` for resource metrics. `xychart-beta`
+has no legend, so multi-series metrics are drawn as one chart per series — which
+is where three of every four blocks come from.
 
-**`mermaid` is what the action has always emitted**, kept for the single job
-being investigated: gantt for the step and process traces, `xychart-beta` for
-resource metrics. `xychart-beta` has no legend, so multi-series metrics are
-drawn as one chart per series — which is where three of every four blocks come
-from.
+**`sparkline` exists for one specific failure, and it is the page rather than
+the runner.** GitHub renders every mermaid block in its own sandboxed iframe
+from `viewscreen.githubusercontent.com`, which loads mermaid.js and lays the
+diagram out client-side. A dozen of those per job is nothing; the run summary
+page concatenates _every_ job's summary, so a large matrix multiplies the iframe
+count by the job count and the page dies while the data is still perfectly good.
+Text costs nothing there. It is not the default because it trades real axes and
+real values for eight levels of block character, and most workflows run few
+enough jobs to never pay the iframe cost.
+
+The rule that follows: **anything added to the summary needs a text form as well
+as a mermaid one.** A mermaid-only section puts the large-matrix case back where
+it started, and that is the case `sparkline` exists to answer.
 
 Both renderers consume the same data, so a series is named once: `Metric` in
 `statCollector.ts` carries the group, series and unit for the table and the axis

@@ -34001,17 +34001,19 @@ const BAR_EMPTY = '░';
 const SPARKLINE_WIDTH = 60;
 /** Columns a timeline bar spans. */
 const TIMELINE_WIDTH = 30;
+const DEFAULT_CHART_MODE = 'mermaid';
 function chartMode() {
     const input = getInput('charts').trim().toLowerCase();
     if (!input) {
-        return 'sparkline';
+        return DEFAULT_CHART_MODE;
     }
     if (!CHART_MODES.includes(input)) {
         // Falling back silently would render the opposite of what was asked for,
         // and the only symptom would be a summary that looks fine.
         error(`Unknown 'charts' value '${input}'. ` +
-            `Expected one of ${CHART_MODES.join(', ')}. Using 'sparkline'.`);
-        return 'sparkline';
+            `Expected one of ${CHART_MODES.join(', ')}. ` +
+            `Using '${DEFAULT_CHART_MODE}'.`);
+        return DEFAULT_CHART_MODE;
     }
     return input;
 }
