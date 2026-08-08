@@ -126,6 +126,18 @@ describe('cell and code', () => {
     expect(code('a | b')).toBe('`a \\| b`')
   })
 
+  it('escapes a backslash before escaping the pipe it precedes', () => {
+    // Escaping only the pipe would give `a\\|b`, which the row scanner reads as
+    // an escaped backslash and then a live delimiter, so the cell splits after
+    // all. Both passes, in this order, are what stops that.
+    expect(cell('a\\|b')).toBe('a\\\\\\|b')
+    expect(code('a\\|b')).toBe('`a\\\\\\|b`')
+  })
+
+  it('escapes a lone backslash, which no longer escapes what follows it', () => {
+    expect(cell('C:\\path')).toBe('C:\\\\path')
+  })
+
   it('flattens newlines, which a table cell cannot hold', () => {
     expect(cell('a\nb')).toBe('a b')
   })

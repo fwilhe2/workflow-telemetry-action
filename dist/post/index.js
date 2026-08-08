@@ -34090,13 +34090,29 @@ function markdownTable(headers, align, rows) {
         ...rows.map((cells) => `| ${cells.join(' | ')} |`)
     ].join('\n');
 }
-/** Wraps text so a table cell keeps monospace alignment, and stays one cell. */
+/**
+ * Escapes what would otherwise end a table cell early.
+ *
+ * The backslash pass has to come first and is not decoration: escaping only the
+ * pipe turns an input backslash immediately before one into `\\|`, which the
+ * row scanner reads as an escaped backslash followed by a live delimiter, so
+ * the cell splits anyway and the row breaks. Escaping the backslashes first
+ * makes that `\\\|` — a literal backslash, then an escaped pipe.
+ */
+function escapeCell(text) {
+    return text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+}
+/**
+ * Wraps text so a table cell keeps monospace alignment, and stays one cell.
+ * GFM resolves table delimiters before inline spans, so an escaped pipe is
+ * still needed inside the backticks.
+ */
 function code(text) {
-    return `\`${text.replace(/\|/g, '\\|')}\``;
+    return `\`${escapeCell(text)}\``;
 }
 /** Table cells cannot contain a newline, and `|` would start a new column. */
 function cell(text) {
-    return text.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+    return escapeCell(text).replace(/\r?\n/g, ' ');
 }
 function formatNumber(value) {
     if (value === 0) {
