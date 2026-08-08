@@ -6,6 +6,16 @@ inputs:
     description: 'GitHub API Access Token'
     default: ${{ github.token }}
     required: false
+  charts:
+    description:
+      "How the traces and metrics are drawn. 'sparkline' renders them as text —
+      Unicode block characters in a markdown table — which costs the page
+      nothing. 'mermaid' renders them as diagrams, each of which GitHub loads in
+      its own iframe; a summary page holding a matrix worth of those is slow to
+      the point of being unusable, so prefer it for a single job under
+      investigation. Defaults to 'sparkline'."
+    default: 'sparkline'
+    required: false
   metric_frequency:
     description:
       "Metric collection frequency in seconds. Must be a number. Defaults to

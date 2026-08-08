@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A `charts` input, and text output as the default.** Traces and metrics are
+  now rendered as sparklines and bars in markdown tables; `charts: mermaid`
+  restores the diagrams, unchanged.
+
+  The reason is that mermaid costs the _page_, not the runner. GitHub renders
+  every mermaid block in its own sandboxed iframe from
+  `viewscreen.githubusercontent.com`, which loads mermaid.js and lays the
+  diagram out client-side. This action emits about a dozen blocks per job — one
+  gantt for the step trace, one per metric series because `xychart-beta` has no
+  legend, one gantt for the process trace — which is fine on a job page. The run
+  summary page concatenates every job's summary, so a build matrix multiplies
+  that by the job count: a 77-job workflow asks the browser for roughly 850
+  iframes, and the page becomes unusable long before the telemetry stops being
+  worth reading.
+
+  The text form has no such cost and carries the same information: a sparkline
+  scaled to its own series for the shape, peak and mean columns for the numbers,
+  and a bar placed along the job's span for each step and process — the same
+  picture a gantt draws. Reach for `charts: mermaid` on the one job being
+  investigated rather than across a matrix.
+
+### Fixed
+
+- A process whose extra info contained a colon could break the mermaid gantt:
+  the `#colon;` escape was applied to the process name but not to the action
+  name appended after it.
+
 ## 3.0.0
 
 First release of this fork. It diverges from

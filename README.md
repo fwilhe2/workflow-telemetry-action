@@ -71,39 +71,57 @@ and as trace table with the following information:
 > runners moved on. If `forkstat` cannot be installed, tracing is skipped and
 > the rest of the telemetry still works.
 
-> **Note on charts** Resource metrics are rendered as
-> [Mermaid](https://mermaid.js.org/) charts, which GitHub renders natively in
-> job summaries and pull request comments. Earlier versions posted the data to a
-> third-party chart-image service that no longer exists, so those charts came
-> out broken. Nothing is sent anywhere now.
+> **Note on charts** Output is text by default — sparklines and bars in markdown
+> tables — and the `charts: mermaid` input switches it to diagrams. The reason
+> is the `charts` option below: mermaid costs the _page_, not the runner, and
+> that cost is per job. Nothing is sent anywhere in either mode; earlier
+> versions posted the data to a third-party chart-image service that no longer
+> exists, so those charts came out broken.
 
 ### Example Output
 
-An example output of a simple workflow run will look like this.
+By default everything is rendered as text, which costs the page nothing however
+many jobs report into it.
 
-The step trace and the process trace are rendered as Mermaid gantt charts:
+Resource metrics come out as one table, with the sparkline carrying the shape
+and the columns beside it carrying the numbers the sparkline deliberately does
+not:
+
+| Metric             | Trace                                           |    Peak |    Mean |
+| :----------------- | :---------------------------------------------- | ------: | ------: |
+| CPU - user         | `▁▁▁▅▆▆▇▇▇▇████▇▇▇▇▇█████▇▇▇▇▇████▇▇▇▇▇█▂▂▂▂▂▂` |  96.0 % |  70.3 % |
+| CPU - system       | `▁▁▁███▇▆▅▄▃▃▃▃▄▅▆▇███▇▇▆▅▄▃▃▃▄▄▅▆▇███▇▆▅▄▄▃▃▃` |  13.0 % |   8.5 % |
+| Memory - used      | `▁▁▁▂▂▂▂▂▃▃▃▃▃▄▄▄▄▄▅▅▅▅▅▆▆▆▆▆▇▇▇▇▇████████████` | 4060 MB | 2735 MB |
+| Network I/O - read | `█▇▅▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁` | 22.0 MB |  1.5 MB |
+| Disk I/O - write   | `▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▅███████` | 95.0 MB | 20.8 MB |
+
+A sparkline is scaled to its own series, so the shape is visible whatever the
+magnitude; a flat series is drawn at the floor when it is zero and mid-height
+when it is not, so an idle NIC and a pegged CPU do not look alike.
+
+The step and process traces come out as the same picture a gantt chart draws,
+one row per span:
+
+| Step                 | Duration | Timeline (7m 29s)                |
+| :------------------- | -------: | :------------------------------- |
+| Set up job           |     2.0s | `█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░` |
+| Run actions/checkout |     4.0s | `█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░` |
+| Build package        |    7m 2s | `█████████████████████████████░` |
+| Upload artifact      |    17.0s | `░░░░░░░░░░░░░░░░░░░░░░░░░░░░██` |
+
+With `charts: mermaid`, the traces are rendered as Mermaid gantt charts and each
+metric series as its own `xychart` block:
 
 ![Step Trace Example](/images/step-trace-example.png)
 
 ![Process Trace Example](/images/proc-trace-example.png)
 
-Resource metrics are rendered as Mermaid `xychart` blocks, one per series, and
-appear in the job summary like this:
-
 ```mermaid
 xychart-beta
-    title "CPU Load - User (%)"
+    title "CPU - user (%)"
     x-axis "Time (s)" 0 --> 55
     y-axis "Load (%)" 0 --> 100
     line [12.4, 30.1, 55.2, 78.9, 96.3, 88.1, 41.0, 22.8, 15.2, 9.4, 6.1, 3.2]
-```
-
-```mermaid
-xychart-beta
-    title "Memory Usage - Used (MB)"
-    x-axis "Time (s)" 0 --> 55
-    y-axis "Memory (MB)" 0 --> 2900
-    line [860, 1180, 1640, 2020, 2280, 2410, 2520, 2580, 2610, 2740, 2870, 2880]
 ```
 
 ## Usage
@@ -126,6 +144,7 @@ jobs:
 | Option                       | Requirement | Description                                                                                                                                                                                                                       |
 | ---------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `github_token`               | Optional    | An alternative GitHub token, other than the default provided by GitHub Actions runner.                                                                                                                                            |
+| `charts`                     | Optional    | How traces and metrics are drawn: `sparkline` (text in markdown tables) or `mermaid` (diagrams). Defaults to `sparkline`. See the note below before choosing `mermaid` on a matrix.                                               |
 | `metric_frequency`           | Optional    | Metric collection frequency in seconds. Must be a number. Defaults to `5`.                                                                                                                                                        |
 | `proc_trace_enable`          | Optional    | Set to `false` to skip process tracing. It is the only part of the action that installs anything (`forkstat`, ~5s on x64 and ~9s on arm64) and the only part needing `sudo`. Resource metrics are unaffected. Defaults to `true`. |
 | `proc_trace_min_duration`    | Optional    | Puts minimum limit for process execution duration to be traced. Must be a number. Defaults to `-1` which means process duration filtering is not applied.                                                                         |
@@ -133,6 +152,15 @@ jobs:
 | `proc_trace_table_show`      | Optional    | Enables showing traced processes in trace table. Defaults to `false`.                                                                                                                                                             |
 | `comment_on_pr`              | Optional    | Set to `true` to publish the results as comment to the PR (applicable if workflow run is triggered by PR). Defaults to `true`. <br/> Requires `pull-requests: write` permission                                                   |
 | `job_summary`                | Optional    | Set to `true` to publish the results as part of the [job summary page](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) of the workflow run. Defaults to `true`.                                  |
+
+> **Cost of `charts: mermaid`:** GitHub renders every mermaid block in its own
+> sandboxed iframe served from `viewscreen.githubusercontent.com`, which loads
+> mermaid.js and lays the diagram out in the browser. One job's telemetry is a
+> dozen of those, which is fine on a job page. The run summary page concatenates
+> every job's summary, so a matrix multiplies that by the job count — a 77-job
+> workflow asks the browser for around 850 iframes and the page stops being
+> usable. The text output has no such cost, which is why it is the default;
+> enable `mermaid` on the one job under investigation instead.
 
 ## Development
 
