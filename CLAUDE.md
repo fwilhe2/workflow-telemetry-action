@@ -67,8 +67,9 @@ OS process** and cannot share a chunk with the entry points:
 
 The flow:
 
-1. `main` starts three subsystems: `stepTracer` (records step timings from the
-   job payload), `statCollector`, `processTracer`.
+1. `main` starts the two subsystems that need starting: `statCollector` and
+   `processTracer`. `stepTracer` has nothing to start — step timings come from
+   the job payload `post` already fetches, so it only has a `report()`.
 2. `statCollector.start()` spawns `dist/scw` as a **detached process**, located
    via `import.meta.dirname` + `../scw/index.js`. That path coupling is why the
    `dist/<name>/index.js` layout must not change casually.

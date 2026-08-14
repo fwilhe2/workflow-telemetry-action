@@ -147,54 +147,18 @@ function generateTraceChartForSteps(job: WorkflowJobType): string {
 
 ///////////////////////////
 
-export async function start(): Promise<boolean> {
-  logger.info(`Starting step tracer ...`)
-
-  try {
-    logger.info(`Started step tracer`)
-
-    return true
-  } catch (error) {
-    logger.error('Unable to start step tracer')
-    logger.error(error)
-
-    return false
-  }
-}
-
-export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
-  logger.info(`Finishing step tracer ...`)
-
-  try {
-    logger.info(`Finished step tracer`)
-
-    return true
-  } catch (error) {
-    logger.error('Unable to finish step tracer')
-    logger.error(error)
-
-    return false
-  }
-}
+// There is nothing to start or stop: the step timings come from the job payload
+// the post step already has, so this module only reports.
 
 export async function report(
   currentJob: WorkflowJobType
 ): Promise<string | null> {
   logger.info(`Reporting step tracer result ...`)
 
-  if (!currentJob) {
-    return null
-  }
-
   try {
-    const postContent: string =
-      chartMode() === 'mermaid'
-        ? generateTraceChartForSteps(currentJob)
-        : renderStepTable(currentJob)
-
-    logger.info(`Reported step tracer result`)
-
-    return postContent
+    return chartMode() === 'mermaid'
+      ? generateTraceChartForSteps(currentJob)
+      : renderStepTable(currentJob)
   } catch (error) {
     logger.error('Unable to report step tracer result')
     logger.error(error)

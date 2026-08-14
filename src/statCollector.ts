@@ -1,20 +1,7 @@
 import { ChildProcess, spawn } from 'child_process'
 import path from 'path'
 import * as core from '@actions/core'
-import {
-  CPUStats,
-  DiskSizeStats,
-  DiskStats,
-  MemoryStats,
-  NetworkStats,
-  ProcessedCPUStats,
-  ProcessedDiskSizeStats,
-  ProcessedDiskStats,
-  ProcessedMemoryStats,
-  ProcessedNetworkStats,
-  ProcessedStats,
-  WorkflowJobType
-} from './interfaces/index.js'
+import { ProcessedStats, StatSample } from './interfaces/index.js'
 import * as logger from './logger.js'
 import {
   ChartMode,
@@ -49,6 +36,54 @@ interface Metric {
   readonly points: ProcessedStats[]
 }
 
+/** A collector's endpoint and the series to read out of its samples. */
+interface MetricGroup {
+  readonly group: string
+  readonly path: string
+  readonly unit: string
+  readonly axis: string
+  /** Series name to the field it is read from, in the order they are drawn. */
+  readonly series: Record<string, string>
+}
+
+const METRIC_GROUPS: MetricGroup[] = [
+  {
+    group: 'CPU',
+    path: '/cpu',
+    unit: '%',
+    axis: 'Load (%)',
+    series: { user: 'userLoad', system: 'systemLoad' }
+  },
+  {
+    group: 'Memory',
+    path: '/memory',
+    unit: 'MB',
+    axis: 'Memory (MB)',
+    series: { used: 'activeMemoryMb', free: 'availableMemoryMb' }
+  },
+  {
+    group: 'Network I/O',
+    path: '/network',
+    unit: 'MB',
+    axis: 'Network (MB)',
+    series: { read: 'rxMb', write: 'txMb' }
+  },
+  {
+    group: 'Disk I/O',
+    path: '/disk',
+    unit: 'MB',
+    axis: 'Disk (MB)',
+    series: { read: 'rxMb', write: 'wxMb' }
+  },
+  {
+    group: 'Disk usage',
+    path: '/disk_size',
+    unit: 'MB',
+    axis: 'Disk (MB)',
+    series: { used: 'usedSizeMb', free: 'availableSizeMb' }
+  }
+]
+
 /** Calls the stat collector worker, which listens on localhost. */
 async function callStatServer(
   pathname: string,
@@ -73,6 +108,28 @@ async function triggerStatCollect(): Promise<void> {
   if (logger.isDebugEnabled()) {
     logger.debug(`Triggered stat collect: ${JSON.stringify(result)}`)
   }
+}
+
+/** Reads one collector's history and splits it into its series. */
+async function metricsOf(group: MetricGroup): Promise<Metric[]> {
+  logger.debug(`Getting ${group.group} stats ...`)
+  const samples = (await callStatServer(group.path)) as StatSample[]
+  if (logger.isDebugEnabled()) {
+    logger.debug(`Got ${group.group} stats: ${JSON.stringify(samples)}`)
+  }
+
+  return Object.entries(group.series).map(([series, field]) => ({
+    group: group.group,
+    series,
+    unit: group.unit,
+    axis: group.axis,
+    // A missing or negative reading is drawn as zero rather than dropped, so
+    // the series stays aligned with the timeline.
+    points: samples.map((sample) => ({
+      x: sample.time,
+      y: sample[field] > 0 ? sample[field] : 0
+    }))
+  }))
 }
 
 /**
@@ -193,39 +250,11 @@ function renderMetricCharts(metrics: Metric[]): string {
 }
 
 async function reportWorkflowMetrics(): Promise<string> {
-  const { userLoadX, systemLoadX } = await getCPUStats()
-  const { activeMemoryX, availableMemoryX } = await getMemoryStats()
-  const { networkReadX, networkWriteX } = await getNetworkStats()
-  const { diskReadX, diskWriteX } = await getDiskStats()
-  const { diskAvailableX, diskUsedX } = await getDiskSizeStats()
-
-  const cpu = 'Load (%)'
-  const memory = 'Memory (MB)'
-  const network = 'Network (MB)'
-  const disk = 'Disk (MB)'
-
-  const metric = (
-    group: string,
-    series: string,
-    unit: string,
-    axis: string,
-    points: ProcessedStats[]
-  ): Metric => ({ group, series, unit, axis, points })
-
   // A series with no samples has nothing to draw and no peak to report: a job
   // shorter than one collection interval produces several of these.
-  const metrics: Metric[] = [
-    metric('CPU', 'user', '%', cpu, userLoadX),
-    metric('CPU', 'system', '%', cpu, systemLoadX),
-    metric('Memory', 'used', 'MB', memory, activeMemoryX),
-    metric('Memory', 'free', 'MB', memory, availableMemoryX),
-    metric('Network I/O', 'read', 'MB', network, networkReadX),
-    metric('Network I/O', 'write', 'MB', network, networkWriteX),
-    metric('Disk I/O', 'read', 'MB', disk, diskReadX),
-    metric('Disk I/O', 'write', 'MB', disk, diskWriteX),
-    metric('Disk usage', 'used', 'MB', disk, diskUsedX),
-    metric('Disk usage', 'free', 'MB', disk, diskAvailableX)
-  ].filter((m) => m.points && m.points.length)
+  const metrics: Metric[] = (await Promise.all(METRIC_GROUPS.map(metricsOf)))
+    .flat()
+    .filter((metric) => metric.points.length)
 
   if (!metrics.length) {
     return ''
@@ -238,154 +267,17 @@ async function reportWorkflowMetrics(): Promise<string> {
   return ['### Resource Metrics', '', renderMetricTable(metrics), ''].join('\n')
 }
 
-async function getCPUStats(): Promise<ProcessedCPUStats> {
-  const userLoadX: ProcessedStats[] = []
-  const systemLoadX: ProcessedStats[] = []
-
-  logger.debug('Getting CPU stats ...')
-  const stats = (await callStatServer('/cpu')) as CPUStats[]
-  if (logger.isDebugEnabled()) {
-    logger.debug(`Got CPU stats: ${JSON.stringify(stats)}`)
-  }
-
-  stats.forEach((element: CPUStats) => {
-    userLoadX.push({
-      x: element.time,
-      y: element.userLoad && element.userLoad > 0 ? element.userLoad : 0
-    })
-
-    systemLoadX.push({
-      x: element.time,
-      y: element.systemLoad && element.systemLoad > 0 ? element.systemLoad : 0
-    })
-  })
-
-  return { userLoadX, systemLoadX }
-}
-
-async function getMemoryStats(): Promise<ProcessedMemoryStats> {
-  const activeMemoryX: ProcessedStats[] = []
-  const availableMemoryX: ProcessedStats[] = []
-
-  logger.debug('Getting memory stats ...')
-  const stats = (await callStatServer('/memory')) as MemoryStats[]
-  if (logger.isDebugEnabled()) {
-    logger.debug(`Got memory stats: ${JSON.stringify(stats)}`)
-  }
-
-  stats.forEach((element: MemoryStats) => {
-    activeMemoryX.push({
-      x: element.time,
-      y:
-        element.activeMemoryMb && element.activeMemoryMb > 0
-          ? element.activeMemoryMb
-          : 0
-    })
-
-    availableMemoryX.push({
-      x: element.time,
-      y:
-        element.availableMemoryMb && element.availableMemoryMb > 0
-          ? element.availableMemoryMb
-          : 0
-    })
-  })
-
-  return { activeMemoryX, availableMemoryX }
-}
-
-async function getNetworkStats(): Promise<ProcessedNetworkStats> {
-  const networkReadX: ProcessedStats[] = []
-  const networkWriteX: ProcessedStats[] = []
-
-  logger.debug('Getting network stats ...')
-  const stats = (await callStatServer('/network')) as NetworkStats[]
-  if (logger.isDebugEnabled()) {
-    logger.debug(`Got network stats: ${JSON.stringify(stats)}`)
-  }
-
-  stats.forEach((element: NetworkStats) => {
-    networkReadX.push({
-      x: element.time,
-      y: element.rxMb && element.rxMb > 0 ? element.rxMb : 0
-    })
-
-    networkWriteX.push({
-      x: element.time,
-      y: element.txMb && element.txMb > 0 ? element.txMb : 0
-    })
-  })
-
-  return { networkReadX, networkWriteX }
-}
-
-async function getDiskStats(): Promise<ProcessedDiskStats> {
-  const diskReadX: ProcessedStats[] = []
-  const diskWriteX: ProcessedStats[] = []
-
-  logger.debug('Getting disk stats ...')
-  const stats = (await callStatServer('/disk')) as DiskStats[]
-  if (logger.isDebugEnabled()) {
-    logger.debug(`Got disk stats: ${JSON.stringify(stats)}`)
-  }
-
-  stats.forEach((element: DiskStats) => {
-    diskReadX.push({
-      x: element.time,
-      y: element.rxMb && element.rxMb > 0 ? element.rxMb : 0
-    })
-
-    diskWriteX.push({
-      x: element.time,
-      y: element.wxMb && element.wxMb > 0 ? element.wxMb : 0
-    })
-  })
-
-  return { diskReadX, diskWriteX }
-}
-
-async function getDiskSizeStats(): Promise<ProcessedDiskSizeStats> {
-  const diskAvailableX: ProcessedStats[] = []
-  const diskUsedX: ProcessedStats[] = []
-
-  logger.debug('Getting disk size stats ...')
-  const stats = (await callStatServer('/disk_size')) as DiskSizeStats[]
-  if (logger.isDebugEnabled()) {
-    logger.debug(`Got disk size stats: ${JSON.stringify(stats)}`)
-  }
-
-  stats.forEach((element: DiskSizeStats) => {
-    diskAvailableX.push({
-      x: element.time,
-      y:
-        element.availableSizeMb && element.availableSizeMb > 0
-          ? element.availableSizeMb
-          : 0
-    })
-
-    diskUsedX.push({
-      x: element.time,
-      y: element.usedSizeMb && element.usedSizeMb > 0 ? element.usedSizeMb : 0
-    })
-  })
-
-  return { diskAvailableX, diskUsedX }
-}
-
 ///////////////////////////
 
-export async function start(): Promise<boolean> {
+// Each subsystem swallows its own failures: one of them going wrong must not
+// stop the others from being started, finished or reported.
+
+export async function start(): Promise<void> {
   logger.info(`Starting stat collector ...`)
 
   try {
-    let metricFrequency = 0
-    const metricFrequencyInput: string = core.getInput('metric_frequency')
-    if (metricFrequencyInput) {
-      const metricFrequencyVal: number = parseInt(metricFrequencyInput)
-      if (Number.isInteger(metricFrequencyVal)) {
-        metricFrequency = metricFrequencyVal * 1000
-      }
-    }
+    const metricFrequency: number =
+      parseInt(core.getInput('metric_frequency')) * 1000
 
     const child: ChildProcess = spawn(
       process.argv[0],
@@ -404,45 +296,28 @@ export async function start(): Promise<boolean> {
     child.unref()
 
     logger.info(`Started stat collector`)
-
-    return true
   } catch (error) {
     logger.error('Unable to start stat collector')
     logger.error(error)
-
-    return false
   }
 }
 
-export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
-  logger.info(`Finishing stat collector ...`)
-
+export async function finish(): Promise<void> {
   try {
-    // Trigger stat collect, so we will have remaining stats since the latest schedule
+    // Trigger a final collect, so the stats since the latest schedule are kept.
     await triggerStatCollect()
-
     logger.info(`Finished stat collector`)
-
-    return true
   } catch (error) {
     logger.error('Unable to finish stat collector')
     logger.error(error)
-
-    return false
   }
 }
 
-export async function report(
-  _currentJob: WorkflowJobType
-): Promise<string | null> {
+export async function report(): Promise<string | null> {
   logger.info(`Reporting stat collector result ...`)
 
   try {
-    const postContent: string = await reportWorkflowMetrics()
-
-    logger.info(`Reported stat collector result`)
-
-    return postContent
+    return await reportWorkflowMetrics()
   } catch (error) {
     logger.error('Unable to report stat collector result')
     logger.error(error)

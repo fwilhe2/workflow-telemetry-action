@@ -1,43 +1,30 @@
 // See: https://eslint.org/docs/latest/use/configure/configuration-files
 
-import { FlatCompat } from '@eslint/eslintrc'
 import js from '@eslint/js'
 import typescriptEslint from '@typescript-eslint/eslint-plugin'
 import tsParser from '@typescript-eslint/parser'
+import prettierConfig from 'eslint-config-prettier'
 import jest from 'eslint-plugin-jest'
 import prettier from 'eslint-plugin-prettier'
 import globals from 'globals'
 
-const compat = new FlatCompat({
-  baseDirectory: import.meta.dirname,
-  recommendedConfig: js.configs.recommended,
-  allConfig: js.configs.all
-})
-
 export default [
   {
-    ignores: ['**/coverage', '**/dist', '**/linter', '**/node_modules']
+    ignores: ['**/coverage', '**/dist', '**/node_modules']
   },
-  ...compat.extends(
-    'eslint:recommended',
-    'plugin:@typescript-eslint/eslint-recommended',
-    'plugin:@typescript-eslint/recommended',
-    'plugin:jest/recommended',
-    'plugin:prettier/recommended'
-  ),
+  js.configs.recommended,
+  ...typescriptEslint.configs['flat/recommended'],
+  jest.configs['flat/recommended'],
+  prettierConfig,
   {
     plugins: {
-      jest,
-      prettier,
-      '@typescript-eslint': typescriptEslint
+      prettier
     },
 
     languageOptions: {
       globals: {
         ...globals.node,
-        ...globals.jest,
-        Atomics: 'readonly',
-        SharedArrayBuffer: 'readonly'
+        ...globals.jest
       },
 
       parser: tsParser,
@@ -58,27 +45,10 @@ export default [
       }
     },
 
-    settings: {
-      'import/resolver': {
-        typescript: {
-          alwaysTryTypes: true,
-          project: 'tsconfig.json'
-        }
-      }
-    },
-
     rules: {
-      camelcase: 'off',
-      'eslint-comments/no-use': 'off',
-      'eslint-comments/no-unused-disable': 'off',
-      'i18n-text/no-en': 'off',
-      'import/no-namespace': 'off',
-      'no-console': 'off',
-      'no-shadow': 'off',
-      'no-unused-vars': 'off',
       'prettier/prettier': 'error',
-      // Unused params are kept where a signature is shared across the
-      // stepTracer/statCollector/processTracer modules; mark them with `_`.
+      'no-unused-vars': 'off',
+      // Deliberately unused bindings are marked with a leading underscore.
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }

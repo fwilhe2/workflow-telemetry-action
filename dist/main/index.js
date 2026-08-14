@@ -1,9 +1,10 @@
+import { spawn, execFile } from 'child_process';
+import path from 'path';
 import * as os from 'os';
 import os__default from 'os';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { promises } from 'fs';
-import path from 'path';
 import http from 'http';
 import https from 'https';
 import 'net';
@@ -30,7 +31,6 @@ import require$$5$2 from 'node:async_hooks';
 import require$$1$4 from 'node:console';
 import require$$1$5 from 'node:dns';
 import require$$5$3 from 'string_decoder';
-import { spawn, execFile } from 'child_process';
 import 'timers';
 import 'readline';
 
@@ -28427,47 +28427,19 @@ function messageOf(err) {
     return err instanceof Error ? err.message : String(err);
 }
 function error(msg) {
-    if (msg instanceof String || typeof msg === 'string') {
-        error$1(`${LOG_HEADER} ${msg}`);
-    }
-    else if (msg instanceof Error) {
-        error$1(`${LOG_HEADER} ${msg.name}`);
-        error$1(msg);
-    }
-    else {
-        error$1(`${LOG_HEADER} ${String(msg)}`);
-    }
-}
-
-///////////////////////////
-async function start$2() {
-    info(`Starting step tracer ...`);
-    try {
-        info(`Started step tracer`);
-        return true;
-    }
-    catch (error$1) {
-        error('Unable to start step tracer');
-        error(error$1);
-        return false;
-    }
+    error$1(`${LOG_HEADER} ${messageOf(msg)}`);
 }
 
 // The worker reads the same variable, and inherits this process's environment,
 // so the two cannot disagree about where the stat server lives.
 parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || '') || 7777;
 ///////////////////////////
+// Each subsystem swallows its own failures: one of them going wrong must not
+// stop the others from being started, finished or reported.
 async function start$1() {
     info(`Starting stat collector ...`);
     try {
-        let metricFrequency = 0;
-        const metricFrequencyInput = getInput('metric_frequency');
-        if (metricFrequencyInput) {
-            const metricFrequencyVal = parseInt(metricFrequencyInput);
-            if (Number.isInteger(metricFrequencyVal)) {
-                metricFrequency = metricFrequencyVal * 1000;
-            }
-        }
+        const metricFrequency = parseInt(getInput('metric_frequency')) * 1000;
         const child = spawn(process.argv[0], [path.join(import.meta.dirname, '../scw/index.js')], {
             detached: true,
             stdio: 'ignore',
@@ -28480,12 +28452,10 @@ async function start$1() {
         });
         child.unref();
         info(`Started stat collector`);
-        return true;
     }
     catch (error$1) {
         error('Unable to start stat collector');
         error(error$1);
-        return false;
     }
 }
 
@@ -28550,13 +28520,13 @@ async function start() {
     if (getInput('proc_trace_enable') === 'false') {
         info(`Process tracing disabled by the "proc_trace_enable" input. ` +
             `Resource metrics are still collected.`);
-        return false;
+        return;
     }
     info(`Starting process tracer ...`);
     try {
         const forkstat = await ensureForkstat();
         if (!forkstat) {
-            return false;
+            return;
         }
         const procTraceOutFilePath = traceFilePath();
         // forkstat writes to stdout, so the trace is captured by redirection.
@@ -28581,23 +28551,18 @@ async function start() {
         saveState(PROC_TRACER_PID_KEY, child.pid?.toString());
         saveState(PROC_TRACER_STARTED_AT_KEY, new Date().toISOString());
         info(`Started process tracer`);
-        return true;
     }
     catch (error$1) {
         error('Unable to start process tracer');
         error(error$1);
-        return false;
     }
 }
 
 async function run() {
+    // Telemetry must never fail the job it is measuring, so nothing escapes here.
     try {
         info(`Initializing ...`);
-        // Start step tracer
-        await start$2();
-        // Start stat collector
         await start$1();
-        // Start process tracer
         await start();
         info(`Initialization completed`);
     }

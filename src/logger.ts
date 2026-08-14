@@ -2,9 +2,7 @@ import * as core from '@actions/core'
 
 const LOG_HEADER = '[Workflow Telemetry]'
 
-export function isDebugEnabled(): boolean {
-  return core.isDebug()
-}
+export const isDebugEnabled = core.isDebug
 
 export function debug(msg: string): void {
   core.debug(`${LOG_HEADER} ${msg}`)
@@ -23,12 +21,5 @@ export function messageOf(err: unknown): string {
 }
 
 export function error(msg: unknown): void {
-  if (msg instanceof String || typeof msg === 'string') {
-    core.error(`${LOG_HEADER} ${msg}`)
-  } else if (msg instanceof Error) {
-    core.error(`${LOG_HEADER} ${msg.name}`)
-    core.error(msg)
-  } else {
-    core.error(`${LOG_HEADER} ${String(msg)}`)
-  }
+  core.error(`${LOG_HEADER} ${messageOf(msg)}`)
 }

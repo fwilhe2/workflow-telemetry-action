@@ -22,9 +22,9 @@ import * as logger from './logger.js'
  * The trade is resolution for cost: eight levels and no axis, against no
  * iframes at all. Reach for it when the run page is the problem.
  */
-export type ChartMode = 'sparkline' | 'mermaid'
+const CHART_MODES = ['sparkline', 'mermaid'] as const
 
-const CHART_MODES: readonly string[] = ['sparkline', 'mermaid']
+export type ChartMode = (typeof CHART_MODES)[number]
 
 /** Lowest to highest. `▁` is not blank — an absent sample draws nothing. */
 const BLOCKS = '▁▂▃▄▅▆▇█'
@@ -46,7 +46,7 @@ export function chartMode(): ChartMode {
   if (!input) {
     return DEFAULT_CHART_MODE
   }
-  if (!CHART_MODES.includes(input)) {
+  if (!(CHART_MODES as readonly string[]).includes(input)) {
     // Falling back silently would render the opposite of what was asked for,
     // and the only symptom would be a summary that looks fine.
     logger.error(

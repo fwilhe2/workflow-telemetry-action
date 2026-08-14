@@ -1,5 +1,4 @@
-import { ChildProcess, spawn, exec } from 'child_process'
-import { execFile } from 'child_process'
+import { ChildProcess, spawn, exec, execFile } from 'child_process'
 import { promisify } from 'util'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -23,13 +22,20 @@ const PROC_TRACER_PID_KEY = 'PROC_TRACER_PID'
 const PROC_TRACER_STARTED_AT_KEY = 'PROC_TRACER_STARTED_AT'
 const PROC_TRACER_OUTPUT_FILE_NAME = 'proc-trace.out'
 const DEFAULT_PROC_TRACE_CHART_MAX_COUNT = 100
-const GHA_FILE_NAME_PREFIX = '/home/runner/work/_actions/'
+/** A Node.js GHA's own script, with the action's name as the capture. */
+const GHA_SCRIPT = /^\/home\/runner\/work\/_actions\/[^/]+\/([^/]+)\//
 
 let finished = false
 
 /** Where the trace is written. */
 function traceFilePath(): string {
   return path.join(os.tmpdir(), PROC_TRACER_OUTPUT_FILE_NAME)
+}
+
+/** An action input as a number, falling back when it is unset or not one. */
+function numberInput(name: string, fallback: number): number {
+  const value: number = parseInt(core.getInput(name))
+  return Number.isInteger(value) ? value : fallback
 }
 
 /**
@@ -94,29 +100,28 @@ async function ensureForkstat(): Promise<string | null> {
   }
 }
 
-/** Lays out one line of the process trace table. */
-function formatRow(
-  ts: string | number,
-  name: string | number,
-  user: string | number,
-  pid: string | number,
-  ppid: string | number,
-  startTime: string | number,
-  duration: string | number,
-  exitCode: string | number,
-  command: string
-): string {
-  return [
-    String(ts).padEnd(12),
-    String(name).padEnd(16),
-    String(user).padStart(10),
-    String(pid).padStart(7),
-    String(ppid).padStart(7),
-    String(startTime).padStart(15),
-    String(duration).padStart(15),
-    String(exitCode).padStart(10),
-    command
-  ].join(' ')
+/** Columns of the detail table. A negative width right-aligns the cell. */
+const DETAIL_COLUMNS: [header: string, width: number][] = [
+  ['TIME', 12],
+  ['NAME', 16],
+  ['USER', -10],
+  ['PID', -7],
+  ['PPID', -7],
+  ['START TIME', -15],
+  ['DURATION (ms)', -15],
+  ['EXIT CODE', -10],
+  ['FILE NAME + ARGS', 0]
+]
+
+/** Lays out one line of the detail table. */
+function formatRow(cells: (string | number)[]): string {
+  return cells
+    .map((value, i) => {
+      const width: number = DETAIL_COLUMNS[i][1]
+      const text: string = String(value)
+      return width < 0 ? text.padStart(-width) : text.padEnd(width)
+    })
+    .join(' ')
 }
 
 /** How a process is named in either renderer. */
@@ -163,33 +168,23 @@ export function renderProcessTable(commands: CompletedCommand[]): string {
   )
 }
 
+/** Names the action a `node` process belongs to, when it belongs to one. */
 function getExtraProcessInfo(command: CompletedCommand): string | null {
-  // Check whether this is node process with args
-  if (command.name === 'node' && command.args.length > 1) {
-    const arg1: string = command.args[1]
-    // Check whether this is Node.js GHA process
-    if (arg1.startsWith(GHA_FILE_NAME_PREFIX)) {
-      const actionFile: string = arg1.substring(GHA_FILE_NAME_PREFIX.length)
-      const idx1: number = actionFile.indexOf('/')
-      const idx2: number = actionFile.indexOf('/', idx1 + 1)
-      if (idx1 >= 0 && idx2 > idx1) {
-        // If we could find a valid GHA name, use it as extra info
-        return actionFile.substring(idx1 + 1, idx2)
-      }
-    }
+  if (command.name !== 'node' || command.args.length < 2) {
+    return null
   }
-  return null
+  return command.args[1].match(GHA_SCRIPT)?.[1] ?? null
 }
 
 ///////////////////////////
 
-export async function start(): Promise<boolean> {
+export async function start(): Promise<void> {
   if (core.getInput('proc_trace_enable') === 'false') {
     logger.info(
       `Process tracing disabled by the "proc_trace_enable" input. ` +
         `Resource metrics are still collected.`
     )
-    return false
+    return
   }
 
   logger.info(`Starting process tracer ...`)
@@ -197,7 +192,7 @@ export async function start(): Promise<boolean> {
   try {
     const forkstat: string | null = await ensureForkstat()
     if (!forkstat) {
-      return false
+      return
     }
 
     const procTraceOutFilePath: string = traceFilePath()
@@ -229,25 +224,19 @@ export async function start(): Promise<boolean> {
     core.saveState(PROC_TRACER_STARTED_AT_KEY, new Date().toISOString())
 
     logger.info(`Started process tracer`)
-
-    return true
   } catch (error) {
     logger.error('Unable to start process tracer')
     logger.error(error)
-
-    return false
   }
 }
 
-export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
-  logger.info(`Finishing process tracer ...`)
-
+export async function finish(): Promise<void> {
   const procTracePID: string = core.getState(PROC_TRACER_PID_KEY)
   if (!procTracePID) {
     logger.info(
       `Skipped finishing process tracer since process tracer didn't started`
     )
-    return false
+    return
   }
   try {
     logger.debug(
@@ -258,13 +247,9 @@ export async function finish(_currentJob: WorkflowJobType): Promise<boolean> {
     finished = true
 
     logger.info(`Finished process tracer`)
-
-    return true
   } catch (error) {
     logger.error('Unable to finish process tracer')
     logger.error(error)
-
-    return false
   }
 }
 
@@ -286,22 +271,14 @@ export async function report(
       `Getting process tracer result from file ${procTraceOutFilePath} ...`
     )
 
-    let procTraceMinDuration = -1
-    const procTraceMinDurationInput: string = core.getInput(
-      'proc_trace_min_duration'
+    const procTraceMinDuration: number = numberInput(
+      'proc_trace_min_duration',
+      -1
     )
-    if (procTraceMinDurationInput) {
-      const minProcDurationVal: number = parseInt(procTraceMinDurationInput)
-      if (Number.isInteger(minProcDurationVal)) {
-        procTraceMinDuration = minProcDurationVal
-      }
-    }
-    const procTraceChartMaxCountInput: number = parseInt(
-      core.getInput('proc_trace_chart_max_count')
+    const procTraceChartMaxCount: number = numberInput(
+      'proc_trace_chart_max_count',
+      DEFAULT_PROC_TRACE_CHART_MAX_COUNT
     )
-    const procTraceChartMaxCount = Number.isInteger(procTraceChartMaxCountInput)
-      ? procTraceChartMaxCountInput
-      : DEFAULT_PROC_TRACE_CHART_MAX_COUNT
     const procTraceTableShow: boolean =
       core.getInput('proc_trace_table_show') === 'true'
 
@@ -365,23 +342,10 @@ export async function report(
     let tableContent = ''
 
     if (procTraceTableShow) {
-      const commandInfos: string[] = []
-      commandInfos.push(
-        formatRow(
-          'TIME',
-          'NAME',
-          'USER',
-          'PID',
-          'PPID',
-          'START TIME',
-          'DURATION (ms)',
-          'EXIT CODE',
-          'FILE NAME + ARGS'
-        )
-      )
-      for (const command of completedCommands) {
-        commandInfos.push(
-          formatRow(
+      tableContent = [
+        formatRow(DETAIL_COLUMNS.map(([header]) => header)),
+        ...completedCommands.map((command) =>
+          formatRow([
             command.ts,
             command.name,
             command.user,
@@ -391,11 +355,9 @@ export async function report(
             command.duration,
             command.exitCode,
             `${command.fileName} ${command.args.join(' ')}`
-          )
+          ])
         )
-      }
-
-      tableContent = commandInfos.join('\n')
+      ].join('\n')
     }
 
     ///////////////////////////////////////////////////////////////////////////
