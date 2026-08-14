@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.2.0
+
+Nothing an action user sees changes in this release. It removes about 430 lines
+of source and config that were saying the same thing five times over.
+
+### Changed
+
+- **The stat collector and its worker are table-driven.** Each side had grown
+  one copy of the same shape per metric: five `collect*Stats` functions, five
+  histograms and a six-case HTTP switch in the worker, and five readers on the
+  other side that each pushed two series by hand. Both are now a table —
+  `collectors` in the worker, `METRIC_GROUPS` in the collector — so a metric is
+  a row rather than four blocks in three places. The endpoints, their payloads
+  and the rendered output are unchanged.
+- **`stepTracer` only reports.** Its `start()` and `finish()` were empty; step
+  timings come from the job payload the post step already fetches.
+- The five `Processed*` interfaces and the five per-collector stat types are one
+  `StatSample`, and `start`/`finish`/`report` no longer return a `boolean` that
+  nothing read. Each subsystem still swallows its own failures, so one of them
+  going wrong cannot take the other two's output down with it.
+
+- An error is logged as one line rather than two: `logger.error` no longer
+  prints an `Error`'s name ahead of the error itself.
+
+### Removed
+
+- Two unused development dependencies (`@eslint/compat`, `@eslint/eslintrc`) and
+  the ESLint rules and resolver settings for four plugins that were never
+  installed.
+
 ## 3.1.0
 
 ### Added
