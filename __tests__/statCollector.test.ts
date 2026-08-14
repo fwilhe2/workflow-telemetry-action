@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals'
-import { downsample, renderChart } from '../src/statCollector.js'
+import { downsample, renderChart, report } from '../src/statCollector.js'
 import { ProcessedStats } from '../src/interfaces/index.js'
 
 /** Builds `count` samples one second apart, valued by `valueAt`. */
@@ -133,5 +133,48 @@ describe('renderChart', () => {
 
     expect(chart).toContain('x-axis "Time (s)" 0 --> 1')
     expect(chart).toContain('line [5]')
+  })
+})
+
+describe('report', () => {
+  /** The stat server, answering each collector's route from a canned history. */
+  function serve(histories: Record<string, object[]>): void {
+    globalThis.fetch = (async (url: string) => ({
+      ok: true,
+      text: async () => JSON.stringify(histories[new URL(url).pathname] ?? [])
+    })) as unknown as typeof fetch
+  }
+
+  it('reads every collector and names each series once', async () => {
+    const time = 1_700_000_000_000
+    serve({
+      '/cpu': [{ time, userLoad: 10, systemLoad: 5 }],
+      '/memory': [{ time, activeMemoryMb: 100, availableMemoryMb: 900 }],
+      '/network': [{ time, rxMb: 1, txMb: 2 }],
+      '/disk': [{ time, rxMb: 3, wxMb: 4 }],
+      '/disk_size': [{ time, usedSizeMb: 7, availableSizeMb: 8 }]
+    })
+    process.env.INPUT_CHARTS = 'sparkline'
+
+    const content = await report()
+
+    // Every series is read out of the right field of the right endpoint.
+    expect(content).toContain('| CPU - user | ')
+    expect(content).toContain('| 10.0 % | 10.0 % |')
+    expect(content).toContain('| 5.0 % | 5.0 % |')
+    expect(content).toContain('| 100 MB | 100 MB |')
+    expect(content).toContain('| 900 MB | 900 MB |')
+    expect(content).toContain('| Disk usage - used | ')
+    expect(content).toContain('| 7.0 MB | 7.0 MB |')
+    expect(content!.split('\n').filter((l) => l.startsWith('| '))).toHaveLength(
+      12
+    )
+  })
+
+  it('drops series a short job never sampled', async () => {
+    serve({})
+    process.env.INPUT_CHARTS = 'sparkline'
+
+    expect(await report()).toBe('')
   })
 })

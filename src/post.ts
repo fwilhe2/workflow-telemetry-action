@@ -127,35 +127,16 @@ async function run(): Promise<void> {
 
     logger.debug(`Current job: ${JSON.stringify(currentJob)}`)
 
-    // Finish step tracer
-    await stepTracer.finish(currentJob)
-    // Finish stat collector
-    await statCollector.finish(currentJob)
-    // Finish process tracer
-    await processTracer.finish(currentJob)
+    await statCollector.finish()
+    await processTracer.finish()
 
-    // Report step tracer
-    const stepTracerContent: string | null = await stepTracer.report(currentJob)
-    // Report stat collector
-    const stepCollectorContent: string | null =
-      await statCollector.report(currentJob)
-    // Report process tracer
-    const procTracerContent: string | null =
+    const contents: (string | null)[] = [
+      await stepTracer.report(currentJob),
+      await statCollector.report(),
       await processTracer.report(currentJob)
+    ]
 
-    let allContent = ''
-
-    if (stepTracerContent) {
-      allContent = allContent.concat(stepTracerContent, '\n')
-    }
-    if (stepCollectorContent) {
-      allContent = allContent.concat(stepCollectorContent, '\n')
-    }
-    if (procTracerContent) {
-      allContent = allContent.concat(procTracerContent, '\n')
-    }
-
-    await reportAll(currentJob, allContent)
+    await reportAll(currentJob, contents.filter(Boolean).join('\n'))
 
     logger.info(`Finish completed`)
   } catch (error) {

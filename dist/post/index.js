@@ -33962,9 +33962,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 const LOG_HEADER = '[Workflow Telemetry]';
-function isDebugEnabled() {
-    return isDebug();
-}
+const isDebugEnabled = isDebug;
 function debug(msg) {
     debug$1(`${LOG_HEADER} ${msg}`);
 }
@@ -33979,18 +33977,30 @@ function messageOf(err) {
     return err instanceof Error ? err.message : String(err);
 }
 function error(msg) {
-    if (msg instanceof String || typeof msg === 'string') {
-        error$1(`${LOG_HEADER} ${msg}`);
-    }
-    else if (msg instanceof Error) {
-        error$1(`${LOG_HEADER} ${msg.name}`);
-        error$1(msg);
-    }
-    else {
-        error$1(`${LOG_HEADER} ${String(msg)}`);
-    }
+    error$1(`${LOG_HEADER} ${messageOf(msg)}`);
 }
 
+/**
+ * How the traces and metrics are drawn.
+ *
+ * `mermaid` is the default and what this action has always emitted: real axes,
+ * real values, and a gantt that places spans on a wall clock. For the handful
+ * of jobs a typical workflow runs it is the better answer, and it is what the
+ * charts were brought back for.
+ *
+ * `sparkline` draws the same series as text — Unicode block characters in a
+ * markdown table — and exists for one specific failure. GitHub renders every
+ * mermaid block in its own sandboxed iframe served from
+ * `viewscreen.githubusercontent.com`, which loads mermaid.js and lays the
+ * diagram out client-side. This action emits about a dozen blocks per job,
+ * which is nothing on a job page; the run summary page concatenates *every*
+ * job's summary, so a large matrix multiplies that by the job count. Past a few
+ * dozen jobs the page stops being usable while the data behind it is still
+ * perfectly good, and text is what makes it readable again.
+ *
+ * The trade is resolution for cost: eight levels and no axis, against no
+ * iframes at all. Reach for it when the run page is the problem.
+ */
 const CHART_MODES = ['sparkline', 'mermaid'];
 /** Lowest to highest. `▁` is not blank — an absent sample draws nothing. */
 const BLOCKS = '▁▂▃▄▅▆▇█';
@@ -34241,29 +34251,15 @@ function generateTraceChartForSteps(job) {
     ];
     return postContentItems.join('\n');
 }
-async function finish$2(_currentJob) {
-    info(`Finishing step tracer ...`);
-    try {
-        info(`Finished step tracer`);
-        return true;
-    }
-    catch (error$1) {
-        error('Unable to finish step tracer');
-        error(error$1);
-        return false;
-    }
-}
+///////////////////////////
+// There is nothing to start or stop: the step timings come from the job payload
+// the post step already has, so this module only reports.
 async function report$2(currentJob) {
     info(`Reporting step tracer result ...`);
-    if (!currentJob) {
-        return null;
-    }
     try {
-        const postContent = chartMode() === 'mermaid'
+        return chartMode() === 'mermaid'
             ? generateTraceChartForSteps(currentJob)
             : renderStepTable(currentJob);
-        info(`Reported step tracer result`);
-        return postContent;
     }
     catch (error$1) {
         error('Unable to report step tracer result');
@@ -34278,6 +34274,43 @@ const STAT_SERVER_PORT = parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || 
 // Mermaid renders every sample as a tick, so a long job would produce an
 // unreadable chart (and a very large summary). Longer runs are downsampled.
 const MAX_CHART_POINTS = 120;
+const METRIC_GROUPS = [
+    {
+        group: 'CPU',
+        path: '/cpu',
+        unit: '%',
+        axis: 'Load (%)',
+        series: { user: 'userLoad', system: 'systemLoad' }
+    },
+    {
+        group: 'Memory',
+        path: '/memory',
+        unit: 'MB',
+        axis: 'Memory (MB)',
+        series: { used: 'activeMemoryMb', free: 'availableMemoryMb' }
+    },
+    {
+        group: 'Network I/O',
+        path: '/network',
+        unit: 'MB',
+        axis: 'Network (MB)',
+        series: { read: 'rxMb', write: 'txMb' }
+    },
+    {
+        group: 'Disk I/O',
+        path: '/disk',
+        unit: 'MB',
+        axis: 'Disk (MB)',
+        series: { read: 'rxMb', write: 'wxMb' }
+    },
+    {
+        group: 'Disk usage',
+        path: '/disk_size',
+        unit: 'MB',
+        axis: 'Disk (MB)',
+        series: { used: 'usedSizeMb', free: 'availableSizeMb' }
+    }
+];
 /** Calls the stat collector worker, which listens on localhost. */
 async function callStatServer(pathname, method = 'GET') {
     const response = await fetch(`http://localhost:${STAT_SERVER_PORT}${pathname}`, { method });
@@ -34293,6 +34326,26 @@ async function triggerStatCollect() {
     if (isDebugEnabled()) {
         debug(`Triggered stat collect: ${JSON.stringify(result)}`);
     }
+}
+/** Reads one collector's history and splits it into its series. */
+async function metricsOf(group) {
+    debug(`Getting ${group.group} stats ...`);
+    const samples = (await callStatServer(group.path));
+    if (isDebugEnabled()) {
+        debug(`Got ${group.group} stats: ${JSON.stringify(samples)}`);
+    }
+    return Object.entries(group.series).map(([series, field]) => ({
+        group: group.group,
+        series,
+        unit: group.unit,
+        axis: group.axis,
+        // A missing or negative reading is drawn as zero rather than dropped, so
+        // the series stays aligned with the timeline.
+        points: samples.map((sample) => ({
+            x: sample.time,
+            y: sample[field] > 0 ? sample[field] : 0
+        }))
+    }));
 }
 /**
  * Renders a series as a Mermaid `xychart-beta` block, which GitHub renders
@@ -34380,30 +34433,11 @@ function renderMetricCharts(metrics) {
     return items.join('\n');
 }
 async function reportWorkflowMetrics() {
-    const { userLoadX, systemLoadX } = await getCPUStats();
-    const { activeMemoryX, availableMemoryX } = await getMemoryStats();
-    const { networkReadX, networkWriteX } = await getNetworkStats();
-    const { diskReadX, diskWriteX } = await getDiskStats();
-    const { diskAvailableX, diskUsedX } = await getDiskSizeStats();
-    const cpu = 'Load (%)';
-    const memory = 'Memory (MB)';
-    const network = 'Network (MB)';
-    const disk = 'Disk (MB)';
-    const metric = (group, series, unit, axis, points) => ({ group, series, unit, axis, points });
     // A series with no samples has nothing to draw and no peak to report: a job
     // shorter than one collection interval produces several of these.
-    const metrics = [
-        metric('CPU', 'user', '%', cpu, userLoadX),
-        metric('CPU', 'system', '%', cpu, systemLoadX),
-        metric('Memory', 'used', 'MB', memory, activeMemoryX),
-        metric('Memory', 'free', 'MB', memory, availableMemoryX),
-        metric('Network I/O', 'read', 'MB', network, networkReadX),
-        metric('Network I/O', 'write', 'MB', network, networkWriteX),
-        metric('Disk I/O', 'read', 'MB', disk, diskReadX),
-        metric('Disk I/O', 'write', 'MB', disk, diskWriteX),
-        metric('Disk usage', 'used', 'MB', disk, diskUsedX),
-        metric('Disk usage', 'free', 'MB', disk, diskAvailableX)
-    ].filter((m) => m.points && m.points.length);
+    const metrics = (await Promise.all(METRIC_GROUPS.map(metricsOf)))
+        .flat()
+        .filter((metric) => metric.points.length);
     if (!metrics.length) {
         return '';
     }
@@ -34413,132 +34447,21 @@ async function reportWorkflowMetrics() {
     }
     return ['### Resource Metrics', '', renderMetricTable(metrics), ''].join('\n');
 }
-async function getCPUStats() {
-    const userLoadX = [];
-    const systemLoadX = [];
-    debug('Getting CPU stats ...');
-    const stats = (await callStatServer('/cpu'));
-    if (isDebugEnabled()) {
-        debug(`Got CPU stats: ${JSON.stringify(stats)}`);
-    }
-    stats.forEach((element) => {
-        userLoadX.push({
-            x: element.time,
-            y: element.userLoad && element.userLoad > 0 ? element.userLoad : 0
-        });
-        systemLoadX.push({
-            x: element.time,
-            y: element.systemLoad && element.systemLoad > 0 ? element.systemLoad : 0
-        });
-    });
-    return { userLoadX, systemLoadX };
-}
-async function getMemoryStats() {
-    const activeMemoryX = [];
-    const availableMemoryX = [];
-    debug('Getting memory stats ...');
-    const stats = (await callStatServer('/memory'));
-    if (isDebugEnabled()) {
-        debug(`Got memory stats: ${JSON.stringify(stats)}`);
-    }
-    stats.forEach((element) => {
-        activeMemoryX.push({
-            x: element.time,
-            y: element.activeMemoryMb && element.activeMemoryMb > 0
-                ? element.activeMemoryMb
-                : 0
-        });
-        availableMemoryX.push({
-            x: element.time,
-            y: element.availableMemoryMb && element.availableMemoryMb > 0
-                ? element.availableMemoryMb
-                : 0
-        });
-    });
-    return { activeMemoryX, availableMemoryX };
-}
-async function getNetworkStats() {
-    const networkReadX = [];
-    const networkWriteX = [];
-    debug('Getting network stats ...');
-    const stats = (await callStatServer('/network'));
-    if (isDebugEnabled()) {
-        debug(`Got network stats: ${JSON.stringify(stats)}`);
-    }
-    stats.forEach((element) => {
-        networkReadX.push({
-            x: element.time,
-            y: element.rxMb && element.rxMb > 0 ? element.rxMb : 0
-        });
-        networkWriteX.push({
-            x: element.time,
-            y: element.txMb && element.txMb > 0 ? element.txMb : 0
-        });
-    });
-    return { networkReadX, networkWriteX };
-}
-async function getDiskStats() {
-    const diskReadX = [];
-    const diskWriteX = [];
-    debug('Getting disk stats ...');
-    const stats = (await callStatServer('/disk'));
-    if (isDebugEnabled()) {
-        debug(`Got disk stats: ${JSON.stringify(stats)}`);
-    }
-    stats.forEach((element) => {
-        diskReadX.push({
-            x: element.time,
-            y: element.rxMb && element.rxMb > 0 ? element.rxMb : 0
-        });
-        diskWriteX.push({
-            x: element.time,
-            y: element.wxMb && element.wxMb > 0 ? element.wxMb : 0
-        });
-    });
-    return { diskReadX, diskWriteX };
-}
-async function getDiskSizeStats() {
-    const diskAvailableX = [];
-    const diskUsedX = [];
-    debug('Getting disk size stats ...');
-    const stats = (await callStatServer('/disk_size'));
-    if (isDebugEnabled()) {
-        debug(`Got disk size stats: ${JSON.stringify(stats)}`);
-    }
-    stats.forEach((element) => {
-        diskAvailableX.push({
-            x: element.time,
-            y: element.availableSizeMb && element.availableSizeMb > 0
-                ? element.availableSizeMb
-                : 0
-        });
-        diskUsedX.push({
-            x: element.time,
-            y: element.usedSizeMb && element.usedSizeMb > 0 ? element.usedSizeMb : 0
-        });
-    });
-    return { diskAvailableX, diskUsedX };
-}
-async function finish$1(_currentJob) {
-    info(`Finishing stat collector ...`);
+async function finish$1() {
     try {
-        // Trigger stat collect, so we will have remaining stats since the latest schedule
+        // Trigger a final collect, so the stats since the latest schedule are kept.
         await triggerStatCollect();
         info(`Finished stat collector`);
-        return true;
     }
     catch (error$1) {
         error('Unable to finish stat collector');
         error(error$1);
-        return false;
     }
 }
-async function report$1(_currentJob) {
+async function report$1() {
     info(`Reporting stat collector result ...`);
     try {
-        const postContent = await reportWorkflowMetrics();
-        info(`Reported stat collector result`);
-        return postContent;
+        return await reportWorkflowMetrics();
     }
     catch (error$1) {
         error('Unable to report stat collector result');
@@ -34709,25 +34632,39 @@ const PROC_TRACER_PID_KEY = 'PROC_TRACER_PID';
 const PROC_TRACER_STARTED_AT_KEY = 'PROC_TRACER_STARTED_AT';
 const PROC_TRACER_OUTPUT_FILE_NAME = 'proc-trace.out';
 const DEFAULT_PROC_TRACE_CHART_MAX_COUNT = 100;
-const GHA_FILE_NAME_PREFIX = '/home/runner/work/_actions/';
+/** A Node.js GHA's own script, with the action's name as the capture. */
+const GHA_SCRIPT = /^\/home\/runner\/work\/_actions\/[^/]+\/([^/]+)\//;
 let finished = false;
 /** Where the trace is written. */
 function traceFilePath() {
     return path.join(os.tmpdir(), PROC_TRACER_OUTPUT_FILE_NAME);
 }
-/** Lays out one line of the process trace table. */
-function formatRow(ts, name, user, pid, ppid, startTime, duration, exitCode, command) {
-    return [
-        String(ts).padEnd(12),
-        String(name).padEnd(16),
-        String(user).padStart(10),
-        String(pid).padStart(7),
-        String(ppid).padStart(7),
-        String(startTime).padStart(15),
-        String(duration).padStart(15),
-        String(exitCode).padStart(10),
-        command
-    ].join(' ');
+/** An action input as a number, falling back when it is unset or not one. */
+function numberInput(name, fallback) {
+    const value = parseInt(getInput(name));
+    return Number.isInteger(value) ? value : fallback;
+}
+/** Columns of the detail table. A negative width right-aligns the cell. */
+const DETAIL_COLUMNS = [
+    ['TIME', 12],
+    ['NAME', 16],
+    ['USER', -10],
+    ['PID', -7],
+    ['PPID', -7],
+    ['START TIME', -15],
+    ['DURATION (ms)', -15],
+    ['EXIT CODE', -10],
+    ['FILE NAME + ARGS', 0]
+];
+/** Lays out one line of the detail table. */
+function formatRow(cells) {
+    return cells
+        .map((value, i) => {
+        const width = DETAIL_COLUMNS[i][1];
+        const text = String(value);
+        return width < 0 ? text.padStart(-width) : text.padEnd(width);
+    })
+        .join(' ');
 }
 /** How a process is named in either renderer. */
 function processLabel(command) {
@@ -34756,41 +34693,28 @@ function renderProcessTable(commands) {
     });
     return markdownTable(['Process', 'Duration', `Timeline (${formatDuration(span)})`], [':--', '--:', ':--'], rows);
 }
+/** Names the action a `node` process belongs to, when it belongs to one. */
 function getExtraProcessInfo(command) {
-    // Check whether this is node process with args
-    if (command.name === 'node' && command.args.length > 1) {
-        const arg1 = command.args[1];
-        // Check whether this is Node.js GHA process
-        if (arg1.startsWith(GHA_FILE_NAME_PREFIX)) {
-            const actionFile = arg1.substring(GHA_FILE_NAME_PREFIX.length);
-            const idx1 = actionFile.indexOf('/');
-            const idx2 = actionFile.indexOf('/', idx1 + 1);
-            if (idx1 >= 0 && idx2 > idx1) {
-                // If we could find a valid GHA name, use it as extra info
-                return actionFile.substring(idx1 + 1, idx2);
-            }
-        }
+    if (command.name !== 'node' || command.args.length < 2) {
+        return null;
     }
-    return null;
+    return command.args[1].match(GHA_SCRIPT)?.[1] ?? null;
 }
-async function finish(_currentJob) {
-    info(`Finishing process tracer ...`);
+async function finish() {
     const procTracePID = getState(PROC_TRACER_PID_KEY);
     if (!procTracePID) {
         info(`Skipped finishing process tracer since process tracer didn't started`);
-        return false;
+        return;
     }
     try {
         debug(`Interrupting process tracer with pid ${procTracePID} to stop gracefully ...`);
         exec(`sudo kill -s INT ${procTracePID}`);
         finished = true;
         info(`Finished process tracer`);
-        return true;
     }
     catch (error$1) {
         error('Unable to finish process tracer');
         error(error$1);
-        return false;
     }
 }
 async function report(currentJob) {
@@ -34802,18 +34726,8 @@ async function report(currentJob) {
     try {
         const procTraceOutFilePath = traceFilePath();
         info(`Getting process tracer result from file ${procTraceOutFilePath} ...`);
-        let procTraceMinDuration = -1;
-        const procTraceMinDurationInput = getInput('proc_trace_min_duration');
-        if (procTraceMinDurationInput) {
-            const minProcDurationVal = parseInt(procTraceMinDurationInput);
-            if (Number.isInteger(minProcDurationVal)) {
-                procTraceMinDuration = minProcDurationVal;
-            }
-        }
-        const procTraceChartMaxCountInput = parseInt(getInput('proc_trace_chart_max_count'));
-        const procTraceChartMaxCount = Number.isInteger(procTraceChartMaxCountInput)
-            ? procTraceChartMaxCountInput
-            : DEFAULT_PROC_TRACE_CHART_MAX_COUNT;
+        const procTraceMinDuration = numberInput('proc_trace_min_duration', -1);
+        const procTraceChartMaxCount = numberInput('proc_trace_chart_max_count', DEFAULT_PROC_TRACE_CHART_MAX_COUNT);
         const procTraceTableShow = getInput('proc_trace_table_show') === 'true';
         const startedAtState = getState(PROC_TRACER_STARTED_AT_KEY);
         const completedCommands = await parse(procTraceOutFilePath, {
@@ -34859,12 +34773,20 @@ async function report(currentJob) {
         ///////////////////////////////////////////////////////////////////////////
         let tableContent = '';
         if (procTraceTableShow) {
-            const commandInfos = [];
-            commandInfos.push(formatRow('TIME', 'NAME', 'USER', 'PID', 'PPID', 'START TIME', 'DURATION (ms)', 'EXIT CODE', 'FILE NAME + ARGS'));
-            for (const command of completedCommands) {
-                commandInfos.push(formatRow(command.ts, command.name, command.user, command.pid, command.ppid, command.startTime, command.duration, command.exitCode, `${command.fileName} ${command.args.join(' ')}`));
-            }
-            tableContent = commandInfos.join('\n');
+            tableContent = [
+                formatRow(DETAIL_COLUMNS.map(([header]) => header)),
+                ...completedCommands.map((command) => formatRow([
+                    command.ts,
+                    command.name,
+                    command.user,
+                    command.pid,
+                    command.ppid,
+                    command.startTime,
+                    command.duration,
+                    command.exitCode,
+                    `${command.fileName} ${command.args.join(' ')}`
+                ]))
+            ].join('\n');
         }
         ///////////////////////////////////////////////////////////////////////////
         const postContentItems = [
@@ -34982,29 +34904,14 @@ async function run() {
             return;
         }
         debug(`Current job: ${JSON.stringify(currentJob)}`);
-        // Finish step tracer
-        await finish$2(currentJob);
-        // Finish stat collector
-        await finish$1(currentJob);
-        // Finish process tracer
-        await finish(currentJob);
-        // Report step tracer
-        const stepTracerContent = await report$2(currentJob);
-        // Report stat collector
-        const stepCollectorContent = await report$1(currentJob);
-        // Report process tracer
-        const procTracerContent = await report(currentJob);
-        let allContent = '';
-        if (stepTracerContent) {
-            allContent = allContent.concat(stepTracerContent, '\n');
-        }
-        if (stepCollectorContent) {
-            allContent = allContent.concat(stepCollectorContent, '\n');
-        }
-        if (procTracerContent) {
-            allContent = allContent.concat(procTracerContent, '\n');
-        }
-        await reportAll(currentJob, allContent);
+        await finish$1();
+        await finish();
+        const contents = [
+            await report$2(currentJob),
+            await report$1(),
+            await report(currentJob)
+        ];
+        await reportAll(currentJob, contents.filter(Boolean).join('\n'));
         info(`Finish completed`);
     }
     catch (error$1) {

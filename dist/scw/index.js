@@ -48702,138 +48702,93 @@ const LOG_HEADER = '[Workflow Telemetry]';
 function info(msg) {
     info$1(`${LOG_HEADER} ${msg}`);
 }
+/**
+ * Best-effort message for a value caught by a `catch` block, which TypeScript
+ * types as `unknown` because anything at all can be thrown.
+ */
+function messageOf(err) {
+    return err instanceof Error ? err.message : String(err);
+}
 function error(msg) {
-    if (msg instanceof String || typeof msg === 'string') {
-        error$1(`${LOG_HEADER} ${msg}`);
-    }
-    else if (msg instanceof Error) {
-        error$1(`${LOG_HEADER} ${msg.name}`);
-        error$1(msg);
-    }
-    else {
-        error$1(`${LOG_HEADER} ${String(msg)}`);
-    }
+    error$1(`${LOG_HEADER} ${messageOf(msg)}`);
 }
 
 const STATS_FREQ = parseInt(process.env.WORKFLOW_TELEMETRY_STAT_FREQ || '') || 5000;
-const SERVER_HOST = 'localhost';
 // Must agree with `statCollector`, which reads the same variable and passes its
 // environment on when spawning this process. Overriding it is only really
 // useful to the smoke test, which runs the worker off the default port.
 const SERVER_PORT = parseInt(process.env.WORKFLOW_TELEMETRY_SERVER_PORT || '') || 7777;
+const MB = 1024 * 1024;
 let expectedScheduleTime = 0;
 let statCollectTime = 0;
-///////////////////////////
-// CPU Stats             //
-///////////////////////////
-const cpuStatsHistogram = [];
-async function collectCPUStats(statTime, _timeInterval) {
-    return si
-        .currentLoad()
-        .then((data) => {
-        const cpuStats = {
-            time: statTime,
-            userLoad: data.currentLoadUser,
-            systemLoad: data.currentLoadSystem
-        };
-        cpuStatsHistogram.push(cpuStats);
-    })
-        .catch((error$1) => {
-        error(error$1);
-    });
+/** A per-second rate, as whole megabytes moved over the sample interval. */
+function movedMb(perSecond, interval) {
+    return Math.floor((perSecond * (interval / 1000)) / MB);
 }
-///////////////////////////
-// Memory Stats          //
-///////////////////////////
-const memoryStatsHistogram = [];
-async function collectMemoryStats(statTime, _timeInterval) {
-    return si
-        .mem()
-        .then((data) => {
-        const memoryStats = {
-            time: statTime,
-            activeMemoryMb: data.active / 1024 / 1024,
-            availableMemoryMb: data.available / 1024 / 1024
-        };
-        memoryStatsHistogram.push(memoryStats);
-    })
-        .catch((error$1) => {
-        error(error$1);
-    });
-}
-///////////////////////////
-// Network Stats         //
-///////////////////////////
-const networkStatsHistogram = [];
-async function collectNetworkStats(statTime, timeInterval) {
-    return si
-        .networkStats()
-        .then((data) => {
-        let totalRxSec = 0;
-        let totalTxSec = 0;
-        for (const nsd of data) {
-            totalRxSec += nsd.rx_sec;
-            totalTxSec += nsd.tx_sec;
+const collectors = [
+    {
+        route: '/cpu',
+        history: [],
+        read: async () => {
+            const data = await si.currentLoad();
+            return {
+                userLoad: data.currentLoadUser,
+                systemLoad: data.currentLoadSystem
+            };
         }
-        const networkStats = {
-            time: statTime,
-            rxMb: Math.floor((totalRxSec * (timeInterval / 1000)) / 1024 / 1024),
-            txMb: Math.floor((totalTxSec * (timeInterval / 1000)) / 1024 / 1024)
-        };
-        networkStatsHistogram.push(networkStats);
-    })
-        .catch((error$1) => {
-        error(error$1);
-    });
-}
-///////////////////////////
-// Disk Stats            //
-///////////////////////////
-const diskStatsHistogram = [];
-async function collectDiskStats(statTime, timeInterval) {
-    return si
-        .fsStats()
-        .then((data) => {
-        const rxSec = data.rx_sec ? data.rx_sec : 0;
-        const wxSec = data.wx_sec ? data.wx_sec : 0;
-        const diskStats = {
-            time: statTime,
-            rxMb: Math.floor((rxSec * (timeInterval / 1000)) / 1024 / 1024),
-            wxMb: Math.floor((wxSec * (timeInterval / 1000)) / 1024 / 1024)
-        };
-        diskStatsHistogram.push(diskStats);
-    })
-        .catch((error$1) => {
-        error(error$1);
-    });
-}
-const diskSizeStatsHistogram = [];
-async function collectDiskSizeStats(statTime, _timeInterval) {
-    return si
-        .fsSize()
-        .then((data) => {
-        let totalSize = 0;
-        let usedSize = 0;
-        for (const fsd of data) {
-            totalSize += fsd.size;
-            usedSize += fsd.used;
+    },
+    {
+        route: '/memory',
+        history: [],
+        read: async () => {
+            const data = await si.mem();
+            return {
+                activeMemoryMb: data.active / MB,
+                availableMemoryMb: data.available / MB
+            };
         }
-        const diskSizeStats = {
-            time: statTime,
-            availableSizeMb: Math.floor((totalSize - usedSize) / 1024 / 1024),
-            usedSizeMb: Math.floor(usedSize / 1024 / 1024)
-        };
-        diskSizeStatsHistogram.push(diskSizeStats);
-    })
-        .catch((error$1) => {
-        error(error$1);
-    });
-}
+    },
+    {
+        route: '/network',
+        history: [],
+        read: async (interval) => {
+            const data = await si.networkStats();
+            return {
+                rxMb: movedMb(data.reduce((total, nsd) => total + nsd.rx_sec, 0), interval),
+                txMb: movedMb(data.reduce((total, nsd) => total + nsd.tx_sec, 0), interval)
+            };
+        }
+    },
+    {
+        route: '/disk',
+        history: [],
+        read: async (interval) => {
+            const data = await si.fsStats();
+            return {
+                rxMb: movedMb(data.rx_sec || 0, interval),
+                wxMb: movedMb(data.wx_sec || 0, interval)
+            };
+        }
+    },
+    {
+        route: '/disk_size',
+        history: [],
+        read: async () => {
+            const data = await si.fsSize();
+            const totalSize = data.reduce((total, fsd) => total + fsd.size, 0);
+            const usedSize = data.reduce((total, fsd) => total + fsd.used, 0);
+            return {
+                availableSizeMb: Math.floor((totalSize - usedSize) / MB),
+                usedSizeMb: Math.floor(usedSize / MB)
+            };
+        }
+    }
+];
 ///////////////////////////
 /**
  * Resolves once every sample has actually been recorded. `/collect` is what the
  * post step calls to capture the tail of the job, and it must not answer before
- * that sample is in the histograms, or the collector reads the response and
+ * that sample is in the histories, or the collector reads the response and
  * misses it.
  */
 async function collectStats(triggeredFromScheduler = true) {
@@ -48844,13 +48799,17 @@ async function collectStats(triggeredFromScheduler = true) {
             : 0;
         statCollectTime = currentTime;
         // Each collector handles its own errors, so this never rejects.
-        await Promise.all([
-            collectCPUStats(statCollectTime, timeInterval),
-            collectMemoryStats(statCollectTime, timeInterval),
-            collectNetworkStats(statCollectTime, timeInterval),
-            collectDiskStats(statCollectTime, timeInterval),
-            collectDiskSizeStats(statCollectTime, timeInterval)
-        ]);
+        await Promise.all(collectors.map(async (collector) => {
+            try {
+                collector.history.push({
+                    time: statCollectTime,
+                    ...(await collector.read(timeInterval))
+                });
+            }
+            catch (error$1) {
+                error(error$1);
+            }
+        }));
     }
     finally {
         if (triggeredFromScheduler) {
@@ -48863,74 +48822,26 @@ async function collectStats(triggeredFromScheduler = true) {
 }
 function startHttpServer() {
     const server = createServer(async (request, response) => {
+        const fail = (statusCode) => {
+            response.statusCode = statusCode;
+            response.end();
+        };
         try {
-            switch (request.url) {
-                case '/cpu': {
-                    if (request.method === 'GET') {
-                        response.end(JSON.stringify(cpuStatsHistogram));
-                    }
-                    else {
-                        response.statusCode = 405;
-                        response.end();
-                    }
-                    break;
+            if (request.url === '/collect') {
+                if (request.method !== 'POST') {
+                    return fail(405);
                 }
-                case '/memory': {
-                    if (request.method === 'GET') {
-                        response.end(JSON.stringify(memoryStatsHistogram));
-                    }
-                    else {
-                        response.statusCode = 405;
-                        response.end();
-                    }
-                    break;
-                }
-                case '/network': {
-                    if (request.method === 'GET') {
-                        response.end(JSON.stringify(networkStatsHistogram));
-                    }
-                    else {
-                        response.statusCode = 405;
-                        response.end();
-                    }
-                    break;
-                }
-                case '/disk': {
-                    if (request.method === 'GET') {
-                        response.end(JSON.stringify(diskStatsHistogram));
-                    }
-                    else {
-                        response.statusCode = 405;
-                        response.end();
-                    }
-                    break;
-                }
-                case '/disk_size': {
-                    if (request.method === 'GET') {
-                        response.end(JSON.stringify(diskSizeStatsHistogram));
-                    }
-                    else {
-                        response.statusCode = 405;
-                        response.end();
-                    }
-                    break;
-                }
-                case '/collect': {
-                    if (request.method === 'POST') {
-                        await collectStats(false);
-                        response.end();
-                    }
-                    else {
-                        response.statusCode = 405;
-                        response.end();
-                    }
-                    break;
-                }
-                default: {
-                    response.statusCode = 404;
-                    response.end();
-                }
+                await collectStats(false);
+                return response.end();
             }
+            const collector = collectors.find((it) => it.route === request.url);
+            if (!collector) {
+                return fail(404);
+            }
+            if (request.method !== 'GET') {
+                return fail(405);
+            }
+            response.end(JSON.stringify(collector.history));
         }
         catch (error$1) {
             // The detail goes to the job log and not into the response. Serialising
@@ -48940,11 +48851,10 @@ function startHttpServer() {
             // the status code and never reads this body. The log is where the cause
             // is actually wanted, and `logger.error` already puts it there.
             error(error$1);
-            response.statusCode = 500;
-            response.end();
+            fail(500);
         }
     });
-    server.listen(SERVER_PORT, SERVER_HOST, () => {
+    server.listen(SERVER_PORT, 'localhost', () => {
         info(`Stat server listening on port ${SERVER_PORT}`);
     });
 }
@@ -48958,5 +48868,4 @@ function init() {
     startHttpServer();
 }
 init();
-///////////////////////////
 //# sourceMappingURL=index.js.map
