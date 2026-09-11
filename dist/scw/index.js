@@ -41,7 +41,7 @@ function getDefaultExportFromCjs (x) {
 
 var lib = {};
 
-var version = "5.33.7";
+var version = "5.33.9";
 var require$$0 = {
 	version: version};
 
@@ -3774,7 +3774,6 @@ function requireOsinfo () {
 	const util = requireUtil$8();
 	const exec = require$$3.exec;
 	const execSync = require$$3.execSync;
-	const execFile = require$$3.execFile;
 
 	const _platform = process.platform;
 
@@ -4531,78 +4530,47 @@ function requireOsinfo () {
 	          });
 	        }
 	        if ({}.hasOwnProperty.call(appsObj.versions, 'postgresql')) {
-	          if (_linux) {
-	            exec('locate bin/postgres', (error, stdout) => {
-	              if (!error) {
-	                const safePath = /^[a-zA-Z0-9/_.-]+$/;
-	                const postgresqlBin = stdout
-	                  .toString()
-	                  .split('\n')
-	                  .filter((p) => safePath.test(p.trim()))
-	                  .sort();
-	                if (postgresqlBin.length) {
-	                  execFile(postgresqlBin[postgresqlBin.length - 1], ['-V'], (error, stdout) => {
-	                    if (!error) {
-	                      const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                      appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
+	          if (_windows) {
+	            util.powerShell('Get-CimInstance Win32_Service | select caption | fl').then((stdout) => {
+	              let serviceSections = stdout.split(/\n\s*\n/);
+	              serviceSections.forEach((item) => {
+	                if (item.trim() !== '') {
+	                  let lines = item.trim().split('\r\n');
+	                  let srvCaption = util.getValue(lines, 'caption', ':', true).toLowerCase();
+	                  if (srvCaption.indexOf('postgresql') > -1) {
+	                    const parts = srvCaption.split(' server ');
+	                    if (parts.length > 1) {
+	                      appsObj.versions.postgresql = parts[1];
 	                    }
-	                    functionProcessed();
-	                  });
-	                } else {
-	                  functionProcessed();
-	                }
-	              } else {
-	                exec('psql -V', (error, stdout) => {
-	                  if (!error) {
-	                    const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                    appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
-	                    appsObj.versions.postgresql = appsObj.versions.postgresql.split('-')[0];
 	                  }
-	                  functionProcessed();
-	                });
-	              }
+	                }
+	              });
+	              functionProcessed();
 	            });
 	          } else {
-	            if (_windows) {
-	              util.powerShell('Get-CimInstance Win32_Service | select caption | fl').then((stdout) => {
-	                let serviceSections = stdout.split(/\n\s*\n/);
-	                serviceSections.forEach((item) => {
-	                  if (item.trim() !== '') {
-	                    let lines = item.trim().split('\r\n');
-	                    let srvCaption = util.getValue(lines, 'caption', ':', true).toLowerCase();
-	                    if (srvCaption.indexOf('postgresql') > -1) {
-	                      const parts = srvCaption.split(' server ');
-	                      if (parts.length > 1) {
-	                        appsObj.versions.postgresql = parts[1];
-	                      }
-	                    }
-	                  }
-	                });
-	                functionProcessed();
-	              });
-	            } else {
-	              exec('postgres -V', (error, stdout) => {
-	                if (!error) {
-	                  const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                  appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
-	                  if (appsObj.versions.postgresql.includes('(') && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes('(')) {
-	                    appsObj.versions.postgresql = postgresql[postgresql.length - 2];
-	                  }
+	            const parsePostgres = (stdout) => {
+	              const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
+	              let version = postgresql.length ? postgresql[postgresql.length - 1] : '';
+	              if (version.includes('(') && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes('(')) {
+	                version = postgresql[postgresql.length - 2];
+	              }
+	              return version.split('-')[0];
+	            };
+	            // no `locate`: its output is any user-writable path and must not be executed
+	            const tryPostgres = (cmds) => {
+	              if (!cmds.length) {
+	                return functionProcessed();
+	              }
+	              exec(cmds[0], (error, stdout) => {
+	                if (!error && stdout.toString().trim()) {
+	                  appsObj.versions.postgresql = parsePostgres(stdout);
 	                  functionProcessed();
 	                } else {
-	                  exec('pg_config --version', (error, stdout) => {
-	                    if (!error) {
-	                      const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                      appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
-	                      if (appsObj.versions.postgresql.includes('(') && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes('(')) {
-	                        appsObj.versions.postgresql = postgresql[postgresql.length - 2];
-	                      }
-	                    }
-	                    functionProcessed();
-	                  });
+	                  tryPostgres(cmds.slice(1));
 	                }
 	              });
-	            }
+	            };
+	            tryPostgres(['postgres -V', 'pg_config --version', 'psql -V']);
 	          }
 	        }
 	        if ({}.hasOwnProperty.call(appsObj.versions, 'perl')) {
@@ -8371,6 +8339,7 @@ function requireGraphics () {
 	const path$1 = path;
 	const exec = require$$3.exec;
 	const execSync = require$$3.execSync;
+	const execFileSync = require$$3.execFileSync;
 	const util = requireUtil$8();
 
 	const _platform = process.platform;
@@ -8835,14 +8804,9 @@ function requireGraphics () {
 	    if (nvidiaSmiExe) {
 	      const nvidiaSmiOpts =
 	        '--query-gpu=driver_version,pci.sub_device_id,name,pci.bus_id,fan.speed,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory,temperature.gpu,temperature.memory,power.draw,power.limit,clocks.gr,clocks.mem --format=csv,noheader,nounits';
-	      const cmd = `"${nvidiaSmiExe}" ${nvidiaSmiOpts}`;
-	      if (_linux) {
-	        options.stdio = ['pipe', 'pipe', 'ignore'];
-	      }
+	      options.stdio = ['pipe', 'pipe', 'ignore'];
 	      try {
-	        const sanitized = cmd + (_linux ? '  2>/dev/null' : '') + (_windows ? '  2> nul' : '');
-	        const res = execSync(sanitized, options).toString();
-	        return res;
+	        return execFileSync(nvidiaSmiExe, nvidiaSmiOpts.split(' '), options).toString();
 	      } catch {
 	        util.noop();
 	      }
@@ -11406,6 +11370,10 @@ function requireFilesystem () {
 	              const smartDev = JSON.parse(execSync('smartctl --scan -j').toString());
 	              if (smartDev && smartDev.devices && smartDev.devices.length > 0) {
 	                smartDev.devices.forEach((dev) => {
+	                  // device names come from smartctl output - never let anything but a plain path reach the shell
+	                  if (!/^[\w/.,:\\-]+$/.test(String(dev.name || ''))) {
+	                    return;
+	                  }
 	                  workload.push(execPromiseSave(`smartctl -j -a ${dev.name}`, util.execOptsWin));
 	                });
 	              }
@@ -11910,8 +11878,8 @@ function requireNetwork () {
 
 	function getWindowsWirelessIfaceSSID(interfaceName) {
 	  try {
-	    const result = execSync(`netsh wlan show  interface name="${interfaceName}" | findstr "SSID"`, util.execOptsWin);
-	    const SSID = result.split('\r\n').shift();
+	    const result = execFileSync('netsh', ['wlan', 'show', 'interface', `name=${util.sanitizeString(interfaceName)}`], util.execOptsWin).toString();
+	    const SSID = result.split('\r\n').find((l) => l.includes('SSID')) || '';
 	    const parseSSID = SSID.split(':').pop().trim();
 	    return parseSSID;
 	  } catch {
@@ -11962,7 +11930,7 @@ function requireNetwork () {
 	      const SSID = getWindowsWirelessIfaceSSID(iface);
 	      if (SSID !== 'Unknown') {
 	        const ifaceSanitized = util.sanitizeString(SSID);
-	        const profiles = execSync(`netsh wlan show profiles "${ifaceSanitized}"`, util.execOptsWin).split('\r\n');
+	        const profiles = execFileSync('netsh', ['wlan', 'show', 'profiles', ifaceSanitized], util.execOptsWin).toString().split('\r\n');
 	        i8021xState = (profiles.find((l) => l.indexOf('802.1X') >= 0) || '').trim();
 	        i8021xProtocol = (profiles.find((l) => l.indexOf('EAP') >= 0) || '').trim();
 	      }
@@ -12485,7 +12453,7 @@ function requireNetwork () {
 	                ip6subnet = ip6linksubnet;
 	              }
 	              const iface = dev.split(':')[0].trim();
-	              const ifaceSanitized = util.sanitizeString(iface);
+	              const ifaceSanitized = util.sanitizeString(iface, true);
 	              const cmd = `echo -n "addr_assign_type: "; cat /sys/class/net/${ifaceSanitized}/addr_assign_type 2>/dev/null; echo;
             echo -n "address: "; cat /sys/class/net/${ifaceSanitized}/address 2>/dev/null; echo;
             echo -n "addr_len: "; cat /sys/class/net/${ifaceSanitized}/addr_len 2>/dev/null; echo;
@@ -13752,7 +13720,7 @@ function requireWifi () {
 	}
 
 	function nmiDeviceLinux(iface) {
-	  const cmd = `nmcli -t -f general,wifi-properties,capabilities,ip4,ip6 device show ${iface} 2> /dev/null`;
+	  const cmd = `nmcli -t -f general,wifi-properties,capabilities,ip4,ip6 device show ${util.sanitizeString(iface, true)} 2> /dev/null`;
 	  try {
 	    const lines = execSync(cmd, util.execOptsLinux).toString().split('\n');
 	    const ssid = util.getValue(lines, 'GENERAL.CONNECTION');
@@ -14439,6 +14407,8 @@ function requireProcesses () {
 	};
 	const _services_cpu = {
 	  all: 0,
+	  all_utime: 0,
+	  all_stime: 0,
 	  list: {},
 	  ms: 0,
 	  result: {}
@@ -14657,12 +14627,20 @@ function requireProcesses () {
 	                });
 	                if (_linux) {
 	                  // calc process_cpu - ps is not accurate in linux!
+	                  // ps pcpu is a lifetime average, the /proc values below are an interval share -
+	                  // drop the ps seed instead of adding both (#1007)
+	                  result.forEach((item) => {
+	                    item.cpu = 0;
+	                  });
 	                  let cmd = 'cat /proc/stat | grep "cpu "';
 	                  for (let i in result) {
 	                    for (let j in result[i].pids) {
 	                      cmd += ';cat /proc/' + result[i].pids[j] + '/stat';
 	                    }
 	                  }
+	                  // freeze the baseline before the async call - a concurrent call overwrites _services_cpu
+	                  // and would leave this one dividing by a few jiffies (#1007)
+	                  const cpuBaseline = Object.assign({}, _services_cpu);
 	                  exec(cmd, { maxBuffer: 1024 * 102400 }, function (error, stdout) {
 	                    let curr_processes = stdout.toString().split('\n');
 
@@ -14673,7 +14651,7 @@ function requireProcesses () {
 	                    let list_new = {};
 	                    let resultProcess = {};
 	                    curr_processes.forEach((element) => {
-	                      resultProcess = calcProcStatLinux(element, all, _services_cpu);
+	                      resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                      if (resultProcess.pid) {
 	                        let listPos = -1;
@@ -14693,9 +14671,7 @@ function requireProcesses () {
 	                          cpuu: resultProcess.cpuu,
 	                          cpus: resultProcess.cpus,
 	                          utime: resultProcess.utime,
-	                          stime: resultProcess.stime,
-	                          cutime: resultProcess.cutime,
-	                          cstime: resultProcess.cstime
+	                          stime: resultProcess.stime
 	                        };
 	                      }
 	                    });
@@ -14870,6 +14846,19 @@ function requireProcesses () {
 	  return user + nice + system + idle + iowait + irq + softirq + steal + guest + guest_nice;
 	}
 
+	// drops NaN/Infinity/negative values and scales cpuu + cpus down proportionally
+	// if their sum exceeds 100 (normalized against all cores)
+	function clampCpuPair(cpuu, cpus) {
+	  if (!isFinite(cpuu) || cpuu < 0) { cpuu = 0; }
+	  if (!isFinite(cpus) || cpus < 0) { cpus = 0; }
+	  const total = cpuu + cpus;
+	  if (total > 100) {
+	    cpuu = (cpuu / total) * 100;
+	    cpus = (cpus / total) * 100;
+	  }
+	  return { cpuu: cpuu, cpus: cpus };
+	}
+
 	function calcProcStatLinux(line, all, _cpu_old) {
 	  let statparts = line.replace(/ +/g, ' ').split(')');
 	  if (statparts.length >= 2) {
@@ -14878,35 +14867,34 @@ function requireProcesses () {
 	      let pid = parseInt(statparts[0].split(' ')[0]);
 	      let utime = parseInt(parts[12]);
 	      let stime = parseInt(parts[13]);
-	      let cutime = parseInt(parts[14]);
-	      let cstime = parseInt(parts[15]);
 
-	      // calc
+	      // calc - child times (cutime/cstime) are deliberately left out: reaping a child adds its
+	      // whole lifetime in one interval, which is what produced the >100% spikes in #1007.
+	      // top, htop and Task Manager exclude them too.
 	      let cpuu = 0;
 	      let cpus = 0;
 	      if (_cpu_old.all > 0 && _cpu_old.list[pid]) {
-	        cpuu = ((utime + cutime - _cpu_old.list[pid].utime - _cpu_old.list[pid].cutime) / (all - _cpu_old.all)) * 100; // user
-	        cpus = ((stime + cstime - _cpu_old.list[pid].stime - _cpu_old.list[pid].cstime) / (all - _cpu_old.all)) * 100; // system
+	        const delta = all - _cpu_old.all;
+	        cpuu = delta > 0 ? ((utime - _cpu_old.list[pid].utime) / delta) * 100 : 0; // user
+	        cpus = delta > 0 ? ((stime - _cpu_old.list[pid].stime) / delta) * 100 : 0; // system
 	      } else {
-	        cpuu = ((utime + cutime) / all) * 100; // user
-	        cpus = ((stime + cstime) / all) * 100; // system
+	        cpuu = all > 0 ? (utime / all) * 100 : 0; // user
+	        cpus = all > 0 ? (stime / all) * 100 : 0; // system
 	      }
+	      // normalized against all cores, so 100 is the ceiling for cpuu + cpus
+	      const clamped = clampCpuPair(cpuu, cpus);
 	      return {
 	        pid: pid,
 	        utime: utime,
 	        stime: stime,
-	        cutime: cutime,
-	        cstime: cstime,
-	        cpuu: cpuu,
-	        cpus: cpus
+	        cpuu: clamped.cpuu,
+	        cpus: clamped.cpus
 	      };
 	    } else {
 	      return {
 	        pid: 0,
 	        utime: 0,
 	        stime: 0,
-	        cutime: 0,
-	        cstime: 0,
 	        cpuu: 0,
 	        cpus: 0
 	      };
@@ -14916,8 +14904,6 @@ function requireProcesses () {
 	      pid: 0,
 	      utime: 0,
 	      stime: 0,
-	      cutime: 0,
-	      cstime: 0,
 	      cpuu: 0,
 	      cpus: 0
 	    };
@@ -14929,18 +14915,21 @@ function requireProcesses () {
 	  let cpuu = 0;
 	  let cpus = 0;
 	  if (_cpu_old.all > 0 && _cpu_old.list[procStat.pid]) {
-	    cpuu = ((procStat.utime - _cpu_old.list[procStat.pid].utime) / (all - _cpu_old.all)) * 100; // user
-	    cpus = ((procStat.stime - _cpu_old.list[procStat.pid].stime) / (all - _cpu_old.all)) * 100; // system
+	    const delta = all - _cpu_old.all;
+	    cpuu = delta > 0 ? ((procStat.utime - _cpu_old.list[procStat.pid].utime) / delta) * 100 : 0; // user
+	    cpus = delta > 0 ? ((procStat.stime - _cpu_old.list[procStat.pid].stime) / delta) * 100 : 0; // system
 	  } else {
-	    cpuu = (procStat.utime / all) * 100; // user
-	    cpus = (procStat.stime / all) * 100; // system
+	    cpuu = all > 0 ? (procStat.utime / all) * 100 : 0; // user
+	    cpus = all > 0 ? (procStat.stime / all) * 100 : 0; // system
 	  }
+	  // same ceiling as the linux path - cpuu + cpus stays inside [0, 100] (#1007)
+	  const clamped = clampCpuPair(cpuu, cpus);
 	  return {
 	    pid: procStat.pid,
 	    utime: procStat.utime,
 	    stime: procStat.stime,
-	    cpuu: cpuu > 0 ? cpuu : 0,
-	    cpus: cpus > 0 ? cpus : 0
+	    cpuu: clamped.cpuu,
+	    cpus: clamped.cpus
 	  };
 	}
 
@@ -15033,6 +15022,11 @@ function requireProcesses () {
 	    let command = '';
 	    let params = '';
 	    let fullcommand = line.substring(parsedhead[12].from + offset, parsedhead[12].to + offset2).trim();
+	    // zombies are printed as "[name] <defunct>" - drop the marker so the bracket handling below
+	    // sees a plain "[name]" and does not leak "] <defunct>" into command and name
+	    if (fullcommand.endsWith(' <defunct>')) {
+	      fullcommand = fullcommand.slice(0, -10).trim();
+	    }
 	    if (fullcommand.substr(fullcommand.length - 1) === ']') {
 	      fullcommand = fullcommand.slice(0, -1);
 	    }
@@ -15251,6 +15245,9 @@ function requireProcesses () {
 	                  result.list.forEach((element) => {
 	                    cmd += ';cat /proc/' + element.pid + '/stat';
 	                  });
+	                  // freeze the baseline before the async call - a concurrent call overwrites _processes_cpu
+	                  // and would leave this one dividing by a few jiffies (#1007)
+	                  const cpuBaseline = Object.assign({}, _processes_cpu);
 	                  exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
 	                    let curr_processes = stdout.toString().split('\n');
 
@@ -15261,7 +15258,7 @@ function requireProcesses () {
 	                    let list_new = {};
 	                    let resultProcess = {};
 	                    curr_processes.forEach((element) => {
-	                      resultProcess = calcProcStatLinux(element, all, _processes_cpu);
+	                      resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                      if (resultProcess.pid) {
 	                        // store pcpu in outer array
@@ -15281,9 +15278,7 @@ function requireProcesses () {
 	                          cpuu: resultProcess.cpuu,
 	                          cpus: resultProcess.cpus,
 	                          utime: resultProcess.utime,
-	                          stime: resultProcess.stime,
-	                          cutime: resultProcess.cutime,
-	                          cstime: resultProcess.cstime
+	                          stime: resultProcess.stime
 	                        };
 	                      }
 	                    });
@@ -15346,6 +15341,9 @@ function requireProcesses () {
 	          }
 	        } else if (_windows) {
 	          try {
+	            // freeze the baseline before the async call - a concurrent call overwrites _processes_cpu
+	            // and would leave this one with a non positive delta (#1007)
+	            const cpuBaseline = Object.assign({}, _processes_cpu);
 	            util
 	              .powerShell(
 	                `Get-CimInstance Win32_Process | select-Object ProcessId,ParentProcessId,ExecutionState,Caption,CommandLine,ExecutablePath,UserModeTime,KernelModeTime,WorkingSetSize,Priority,PageFileUsage,
@@ -15356,8 +15354,10 @@ function requireProcesses () {
 	                  const procs = [];
 	                  const procStats = [];
 	                  const list_new = {};
-	                  let allcpuu = 0;
-	                  let allcpus = 0;
+	                  // accumulate from the previous totals and add deltas only - a process that exited
+	                  // must not lower the total, otherwise the denominator turns negative (#559)
+	                  let allcpuu = cpuBaseline.all_utime;
+	                  let allcpus = cpuBaseline.all_stime;
 	                  let processArray = [];
 	                  try {
 	                    stdout = stdout.trim().replace(/^\uFEFF/, '');
@@ -15377,8 +15377,9 @@ function requireProcesses () {
 	                    const utime = element.UserModeTime;
 	                    const stime = element.KernelModeTime;
 	                    const memw = element.WorkingSetSize;
-	                    allcpuu = allcpuu + utime;
-	                    allcpus = allcpus + stime;
+	                    const cpuOld = cpuBaseline.list[pid];
+	                    allcpuu += utime - (cpuOld ? cpuOld.utime : 0);
+	                    allcpus += stime - (cpuOld ? cpuOld.stime : 0);
 	                    result.all++;
 	                    if (!statusValue) {
 	                      result.unknown++;
@@ -15423,7 +15424,7 @@ function requireProcesses () {
 	                  result.sleeping = result.all - result.running - result.blocked - result.unknown;
 	                  result.list = procs;
 	                  procStats.forEach((element) => {
-	                    let resultProcess = calcProcStatWin(element, allcpuu + allcpus, _processes_cpu);
+	                    let resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
 
 	                    // store pcpu in outer array
 	                    let listPos = result.list.map((e) => e.pid).indexOf(resultProcess.pid);
@@ -15546,12 +15547,16 @@ function requireProcesses () {
 	      if (procSanitized && processes.length && processes[0] !== '------') {
 	        if (_windows) {
 	          try {
+	            // freeze the baseline before the async call - a concurrent call overwrites _process_cpu
+	            // and would leave this one with a non positive delta (#1007)
+	            const cpuBaseline = Object.assign({}, _process_cpu);
 	            util.powerShell('Get-CimInstance Win32_Process | select ProcessId,Caption,UserModeTime,KernelModeTime,WorkingSetSize | ConvertTo-Json -compress').then((stdout, error) => {
 	              if (!error) {
 	                const procStats = [];
 	                const list_new = {};
-	                let allcpuu = 0;
-	                let allcpus = 0;
+	                // see processes() - never lower the total when a process exits (#559)
+	                let allcpuu = cpuBaseline.all_utime;
+	                let allcpus = cpuBaseline.all_stime;
 	                let processArray = [];
 	                try {
 	                  stdout = stdout.trim().replace(/^\uFEFF/, '');
@@ -15568,8 +15573,9 @@ function requireProcesses () {
 	                  const utime = element.UserModeTime;
 	                  const stime = element.KernelModeTime;
 	                  const mem = element.WorkingSetSize;
-	                  allcpuu = allcpuu + utime;
-	                  allcpus = allcpus + stime;
+	                  const cpuOld = cpuBaseline.list[pid];
+	                  allcpuu += utime - (cpuOld ? cpuOld.utime : 0);
+	                  allcpus += stime - (cpuOld ? cpuOld.stime : 0);
 
 	                  procStats.push({
 	                    pid: pid,
@@ -15627,7 +15633,7 @@ function requireProcesses () {
 
 	                // calculate proc stats for each proc
 	                procStats.forEach((element) => {
-	                  let resultProcess = calcProcStatWin(element, allcpuu + allcpus, _process_cpu);
+	                  let resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
 
 	                  let listPos = -1;
 	                  for (let j = 0; j < result.length; j++) {
@@ -15773,6 +15779,9 @@ function requireProcesses () {
 	                    cmd += ';cat /proc/' + result[i].pids[j] + '/stat';
 	                  }
 	                }
+	                // freeze the baseline before the async call - a concurrent call overwrites _process_cpu
+	                // and would leave this one dividing by a few jiffies (#1007)
+	                const cpuBaseline = Object.assign({}, _process_cpu);
 	                exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
 	                  let curr_processes = stdout.toString().split('\n');
 
@@ -15783,7 +15792,7 @@ function requireProcesses () {
 	                  let list_new = {};
 	                  let resultProcess = {};
 	                  curr_processes.forEach((element) => {
-	                    resultProcess = calcProcStatLinux(element, all, _process_cpu);
+	                    resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                    if (resultProcess.pid) {
 	                      // find result item
@@ -15803,9 +15812,7 @@ function requireProcesses () {
 	                        cpuu: resultProcess.cpuu,
 	                        cpus: resultProcess.cpus,
 	                        utime: resultProcess.utime,
-	                        stime: resultProcess.stime,
-	                        cutime: resultProcess.cutime,
-	                        cstime: resultProcess.cstime
+	                        stime: resultProcess.stime
 	                      };
 	                    }
 	                  });
@@ -16446,6 +16453,12 @@ function requireInternet () {
 	        hostSanitized.startsWith('news:') ||
 	        hostSanitized.startsWith('nntp:')
 	      ) {
+	        if (callback) {
+	          callback(null);
+	        }
+	        return resolve(null);
+	      }
+	      if (hostSanitized.startsWith('-')) {
 	        if (callback) {
 	          callback(null);
 	        }
