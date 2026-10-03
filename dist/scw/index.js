@@ -41,7 +41,7 @@ function getDefaultExportFromCjs (x) {
 
 var lib = {};
 
-var version = "5.33.7";
+var version = "5.33.14";
 var require$$0 = {
 	version: version};
 
@@ -821,6 +821,12 @@ function requireUtil$8 () {
 	    .substring(0, 2000)
 	    .replace(/[^a-zA-Z0-9_.,*-]/g, '');
 	  return s.indexOf('..') === -1 ? s : '';
+	}
+
+	// windows drive letter whitelist: only "<letter>:" survives, everything else is dropped
+	function sanitizeDriveLetter(str) {
+	  const match = /^\s*([a-zA-Z]):?[\\/]?\s*$/.exec(String(str || ''));
+	  return match ? match[1] + ':' : '';
 	}
 
 	function sanitizeImageID(str) {
@@ -2855,6 +2861,7 @@ function requireUtil$8 () {
 	util$8.sanitizeImageID = sanitizeImageID;
 	util$8.isPrototypePolluted = isPrototypePolluted;
 	util$8.sanitizeString = sanitizeString;
+	util$8.sanitizeDriveLetter = sanitizeDriveLetter;
 	util$8.decodePiCpuinfo = decodePiCpuinfo;
 	util$8.getRpiGpu = getRpiGpu;
 	util$8.promiseAll = promiseAll;
@@ -3750,6 +3757,2038 @@ function requireSystem () {
 
 var osinfo = {};
 
+var network = {};
+
+var hasRequiredNetwork;
+
+function requireNetwork () {
+	if (hasRequiredNetwork) return network;
+	hasRequiredNetwork = 1;
+	// @ts-check
+	// ==================================================================================
+	// network.js
+	// ----------------------------------------------------------------------------------
+	// Description:   System Information - library
+	//                for Node.js
+	// Copyright:     (c) 2014 - 2026
+	// Author:        Sebastian Hildebrandt
+	// ----------------------------------------------------------------------------------
+	// License:       MIT
+	// ==================================================================================
+	// 9. Network
+	// ----------------------------------------------------------------------------------
+
+	const os = os__default;
+	const exec = require$$3.exec;
+	const execSync = require$$3.execSync;
+	const execFileSync = require$$3.execFileSync;
+	const readFileSync = require$$1__default.readFileSync;
+
+	const fs = require$$1__default;
+	const util = requireUtil$8();
+
+	const _platform = process.platform;
+
+	const _linux = _platform === 'linux' || _platform === 'android';
+	const _darwin = _platform === 'darwin';
+	const _windows = _platform === 'win32';
+	const _freebsd = _platform === 'freebsd';
+	const _openbsd = _platform === 'openbsd';
+	const _netbsd = _platform === 'netbsd';
+	const _sunos = _platform === 'sunos';
+
+	const _network = Object.create(null);
+	let _default_iface = '';
+	let _ifaces = {};
+	let _dhcpNics = [];
+	let _networkInterfaces = [];
+	let _mac = {};
+	let pathToIp;
+
+	function getDefaultNetworkInterface() {
+	  let ifacename = '';
+	  let ifacenameFirst = '';
+	  try {
+	    const ifaces = os.networkInterfaces();
+
+	    let scopeid = 9999;
+
+	    // fallback - "first" external interface (sorted by scopeid)
+	    for (let dev in ifaces) {
+	      if ({}.hasOwnProperty.call(ifaces, dev)) {
+	        ifaces[dev].forEach((details) => {
+	          if (details && details.internal === false) {
+	            ifacenameFirst = ifacenameFirst || dev; // fallback if no scopeid
+	            if (details.scopeid && details.scopeid < scopeid) {
+	              ifacename = dev;
+	              scopeid = details.scopeid;
+	            }
+	          }
+	        });
+	      }
+	    }
+	    ifacename = ifacename || ifacenameFirst || '';
+
+	    if (_windows) {
+	      // https://www.inetdaemon.com/tutorials/internet/ip/routing/default_route.shtml
+	      let defaultIp = '';
+	      const cmd = 'netstat -r';
+	      const result = execSync(cmd, util.execOptsWin);
+	      const lines = result.toString().split(os.EOL);
+	      lines.forEach((line) => {
+	        line = line.replace(/\s+/g, ' ').trim();
+	        if (line.indexOf('0.0.0.0 0.0.0.0') > -1 && !/[a-zA-Z]/.test(line)) {
+	          const parts = line.split(' ');
+	          if (parts.length >= 5) {
+	            defaultIp = parts[parts.length - 2];
+	          }
+	        }
+	      });
+	      if (defaultIp) {
+	        for (let dev in ifaces) {
+	          if ({}.hasOwnProperty.call(ifaces, dev)) {
+	            ifaces[dev].forEach((details) => {
+	              if (details && details.address && details.address === defaultIp) {
+	                ifacename = dev;
+	              }
+	            });
+	          }
+	        }
+	      }
+	    }
+	    if (_linux) {
+	      const cmd = 'ip route 2> /dev/null | grep default';
+	      const result = execSync(cmd, util.execOptsLinux);
+	      const parts = result.toString().split('\n')[0].split(/\s+/);
+	      if (parts[0] === 'none' && parts[5]) {
+	        ifacename = parts[5];
+	      } else if (parts[4]) {
+	        ifacename = parts[4];
+	      }
+
+	      if (ifacename.indexOf(':') > -1) {
+	        ifacename = ifacename.split(':')[1].trim();
+	      }
+	    }
+	    if (_darwin || _freebsd || _openbsd || _netbsd || _sunos) {
+	      let cmd = '';
+	      if (_linux) {
+	        cmd = "ip route 2> /dev/null | grep default | awk '{print $5}'";
+	      }
+	      if (_darwin) {
+	        cmd = "route -n get default 2>/dev/null | grep interface: | awk '{print $2}'";
+	      }
+	      if (_freebsd || _openbsd || _netbsd || _sunos) {
+	        cmd = 'route get 0.0.0.0 | grep interface:';
+	      }
+	      const result = execSync(cmd);
+	      ifacename = result.toString().split('\n')[0];
+	      if (ifacename.indexOf(':') > -1) {
+	        ifacename = ifacename.split(':')[1].trim();
+	      }
+	    }
+	  } catch {
+	    util.noop();
+	  }
+	  if (ifacename) {
+	    _default_iface = ifacename;
+	  }
+	  return _default_iface;
+	}
+
+	network.getDefaultNetworkInterface = getDefaultNetworkInterface;
+
+	function getMacAddresses() {
+	  let iface = '';
+	  let mac = '';
+	  const result = {};
+	  if (_linux || _freebsd || _openbsd || _netbsd) {
+	    if (typeof pathToIp === 'undefined') {
+	      try {
+	        const lines = execSync('which ip', util.execOptsLinux).toString().split('\n');
+	        if (lines.length && lines[0].indexOf(':') === -1 && lines[0].indexOf('/') === 0) {
+	          pathToIp = lines[0];
+	        } else {
+	          pathToIp = '';
+	        }
+	      } catch {
+	        pathToIp = '';
+	      }
+	    }
+	    try {
+	      const cmd = 'export LC_ALL=C; ' + (pathToIp ? pathToIp + ' link show up' : '/sbin/ifconfig') + '; unset LC_ALL';
+	      const res = execSync(cmd, util.execOptsLinux);
+	      const lines = res.toString().split('\n');
+	      for (let i = 0; i < lines.length; i++) {
+	        if (lines[i] && lines[i][0] !== ' ') {
+	          if (pathToIp) {
+	            const nextline = lines[i + 1].trim().split(' ');
+	            if (nextline[0] === 'link/ether') {
+	              iface = lines[i].split(' ')[1];
+	              iface = iface.slice(0, iface.length - 1);
+	              mac = nextline[1];
+	            }
+	          } else {
+	            iface = lines[i].split(' ')[0];
+	            mac = lines[i].split('HWaddr ')[1];
+	          }
+
+	          if (iface && mac) {
+	            result[iface] = mac.trim();
+	            iface = '';
+	            mac = '';
+	          }
+	        }
+	      }
+	    } catch {
+	      util.noop();
+	    }
+	  }
+	  if (_darwin) {
+	    try {
+	      const cmd = '/sbin/ifconfig';
+	      const res = execSync(cmd);
+	      const lines = res.toString().split('\n');
+	      for (let i = 0; i < lines.length; i++) {
+	        if (lines[i] && lines[i][0] !== '\t' && lines[i].indexOf(':') > 0) {
+	          iface = lines[i].split(':')[0];
+	        } else if (lines[i].indexOf('\tether ') === 0) {
+	          mac = lines[i].split('\tether ')[1];
+	          if (iface && mac) {
+	            result[iface] = mac.trim();
+	            iface = '';
+	            mac = '';
+	          }
+	        }
+	      }
+	    } catch {
+	      util.noop();
+	    }
+	  }
+	  return result;
+	}
+
+	network.getMacAddresses = getMacAddresses;
+
+	function networkInterfaceDefault(callback) {
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      const result = getDefaultNetworkInterface();
+	      if (callback) {
+	        callback(result);
+	      }
+	      resolve(result);
+	    });
+	  });
+	}
+
+	network.networkInterfaceDefault = networkInterfaceDefault;
+
+	// --------------------------
+	// NET - interfaces
+
+	function parseLinesWindowsNics(sections, nconfigsections) {
+	  const nics = [];
+	  for (let i in sections) {
+	    try {
+	      if ({}.hasOwnProperty.call(sections, i)) {
+	        if (sections[i].trim() !== '') {
+	          const lines = sections[i].trim().split('\r\n');
+	          let linesNicConfig = null;
+	          try {
+	            linesNicConfig = nconfigsections && nconfigsections[i] ? nconfigsections[i].trim().split('\r\n') : [];
+	          } catch {
+	            util.noop();
+	          }
+	          const netEnabled = util.getValue(lines, 'NetEnabled', ':');
+	          let adapterType = util.getValue(lines, 'AdapterTypeID', ':') === '9' ? 'wireless' : 'wired';
+	          const ifacename = util.getValue(lines, 'Name', ':').replace(/\]/g, ')').replace(/\[/g, '(');
+	          const iface = util.getValue(lines, 'NetConnectionID', ':').replace(/\]/g, ')').replace(/\[/g, '(');
+	          if (ifacename.toLowerCase().indexOf('wi-fi') >= 0 || ifacename.toLowerCase().indexOf('wireless') >= 0) {
+	            adapterType = 'wireless';
+	          }
+	          if (netEnabled !== '') {
+	            const speed = parseInt(util.getValue(lines, 'speed', ':').trim(), 10) / 1000000;
+	            nics.push({
+	              mac: util.getValue(lines, 'MACAddress', ':').toLowerCase(),
+	              dhcp: util.getValue(linesNicConfig, 'dhcpEnabled', ':').toLowerCase() === 'true',
+	              name: ifacename,
+	              iface,
+	              netEnabled: netEnabled === 'TRUE',
+	              speed: isNaN(speed) ? null : speed,
+	              operstate: util.getValue(lines, 'NetConnectionStatus', ':') === '2' ? 'up' : 'down',
+	              type: adapterType
+	            });
+	          }
+	        }
+	      }
+	    } catch {
+	      util.noop();
+	    }
+	  }
+	  return nics;
+	}
+
+	function getWindowsNics() {
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      let cmd = 'Get-CimInstance Win32_NetworkAdapter | fl *' + "; echo '#-#-#-#';";
+	      cmd += 'Get-CimInstance Win32_NetworkAdapterConfiguration | fl DHCPEnabled' + '';
+	      try {
+	        util.powerShell(cmd).then((data) => {
+	          data = data.split('#-#-#-#');
+	          const nsections = (data[0] || '').split(/\n\s*\n/);
+	          const nconfigsections = (data[1] || '').split(/\n\s*\n/);
+	          resolve(parseLinesWindowsNics(nsections, nconfigsections));
+	        });
+	      } catch {
+	        resolve([]);
+	      }
+	    });
+	  });
+	}
+
+	function getWindowsDNSsuffixes() {
+	  let iface = {};
+
+	  const dnsSuffixes = {
+	    primaryDNS: '',
+	    exitCode: 0,
+	    ifaces: []
+	  };
+
+	  try {
+	    const ipconfig = execSync('ipconfig /all', util.execOptsWin);
+	    const ipconfigArray = ipconfig.split('\r\n\r\n');
+
+	    ipconfigArray.forEach((element, index) => {
+	      if (index === 1) {
+	        const longPrimaryDNS = element.split('\r\n').filter((element) => {
+	          return element.toUpperCase().includes('DNS');
+	        });
+	        const primaryDNS = longPrimaryDNS[0].substring(longPrimaryDNS[0].lastIndexOf(':') + 1);
+	        dnsSuffixes.primaryDNS = primaryDNS.trim();
+	        if (!dnsSuffixes.primaryDNS) {
+	          dnsSuffixes.primaryDNS = 'Not defined';
+	        }
+	      }
+	      if (index > 1) {
+	        if (index % 2 === 0) {
+	          const name = element.substring(element.lastIndexOf(' ') + 1).replace(':', '');
+	          iface.name = name;
+	        } else {
+	          const connectionSpecificDNS = element.split('\r\n').filter((element) => {
+	            return element.toUpperCase().includes('DNS');
+	          });
+	          const dnsSuffix = connectionSpecificDNS[0].substring(connectionSpecificDNS[0].lastIndexOf(':') + 1);
+	          iface.dnsSuffix = dnsSuffix.trim();
+	          dnsSuffixes.ifaces.push(iface);
+	          iface = {};
+	        }
+	      }
+	    });
+
+	    return dnsSuffixes;
+	  } catch {
+	    return {
+	      primaryDNS: '',
+	      exitCode: 0,
+	      ifaces: []
+	    };
+	  }
+	}
+
+	function getWindowsIfaceDNSsuffix(ifaces, ifacename) {
+	  let dnsSuffix = '';
+	  // Adding (.) to ensure ifacename compatibility when duplicated iface-names
+	  const interfaceName = ifacename + '.';
+	  try {
+	    const connectionDnsSuffix = ifaces
+	      .filter((iface) => {
+	        return interfaceName.includes(iface.name + '.');
+	      })
+	      .map((iface) => iface.dnsSuffix);
+	    if (connectionDnsSuffix[0]) {
+	      dnsSuffix = connectionDnsSuffix[0];
+	    }
+	    if (!dnsSuffix) {
+	      dnsSuffix = '';
+	    }
+	    return dnsSuffix;
+	  } catch {
+	    return 'Unknown';
+	  }
+	}
+
+	function getWindowsWiredProfilesInformation() {
+	  try {
+	    const result = execSync('netsh lan show profiles', util.execOptsWin);
+	    const profileList = result.split('\r\nProfile on interface');
+	    return profileList;
+	  } catch (error) {
+	    if (error.status === 1 && error.stdout.includes('AutoConfig')) {
+	      return 'Disabled';
+	    }
+	    return [];
+	  }
+	}
+
+	function getWindowsWirelessIfaceSSID(interfaceName) {
+	  try {
+	    const result = execFileSync('netsh', ['wlan', 'show', 'interface', `name=${util.sanitizeString(interfaceName)}`], util.execOptsWin).toString();
+	    const SSID = result.split('\r\n').find((l) => l.includes('SSID')) || '';
+	    const parseSSID = SSID.split(':').pop().trim();
+	    return parseSSID;
+	  } catch {
+	    return 'Unknown';
+	  }
+	}
+	function getWindowsIEEE8021x(connectionType, iface, ifaces) {
+	  const i8021x = {
+	    state: 'Unknown',
+	    protocol: 'Unknown'
+	  };
+
+	  if (ifaces === 'Disabled') {
+	    i8021x.state = 'Disabled';
+	    i8021x.protocol = 'Not defined';
+	    return i8021x;
+	  }
+
+	  if (connectionType === 'wired' && ifaces.length > 0) {
+	    try {
+	      // Get 802.1x information by interface name
+	      const iface8021xInfo = ifaces.find((element) => {
+	        return element.includes(iface + '\r\n');
+	      });
+	      const arrayIface8021xInfo = iface8021xInfo.split('\r\n');
+	      const state8021x = arrayIface8021xInfo.find((element) => {
+	        return element.includes('802.1x');
+	      });
+
+	      if (state8021x.includes('Disabled')) {
+	        i8021x.state = 'Disabled';
+	        i8021x.protocol = 'Not defined';
+	      } else if (state8021x.includes('Enabled')) {
+	        const protocol8021x = arrayIface8021xInfo.find((element) => {
+	          return element.includes('EAP');
+	        });
+	        i8021x.protocol = protocol8021x.split(':').pop();
+	        i8021x.state = 'Enabled';
+	      }
+	    } catch {
+	      return i8021x;
+	    }
+	  } else if (connectionType === 'wireless') {
+	    let i8021xState = '';
+	    let i8021xProtocol = '';
+
+	    try {
+	      const SSID = getWindowsWirelessIfaceSSID(iface);
+	      if (SSID !== 'Unknown') {
+	        const ifaceSanitized = util.sanitizeString(SSID);
+	        const profiles = execFileSync('netsh', ['wlan', 'show', 'profiles', ifaceSanitized], util.execOptsWin).toString().split('\r\n');
+	        i8021xState = (profiles.find((l) => l.indexOf('802.1X') >= 0) || '').trim();
+	        i8021xProtocol = (profiles.find((l) => l.indexOf('EAP') >= 0) || '').trim();
+	      }
+
+	      if (i8021xState.includes(':') && i8021xProtocol.includes(':')) {
+	        i8021x.state = i8021xState.split(':').pop();
+	        i8021x.protocol = i8021xProtocol.split(':').pop();
+	      }
+	    } catch (error) {
+	      if (error.status === 1 && error.stdout.includes('AutoConfig')) {
+	        i8021x.state = 'Disabled';
+	        i8021x.protocol = 'Not defined';
+	      }
+	      return i8021x;
+	    }
+	  }
+
+	  return i8021x;
+	}
+
+	function splitSectionsNics(lines) {
+	  const result = [];
+	  let section = [];
+	  lines.forEach((line) => {
+	    if (!line.startsWith('\t') && !line.startsWith(' ')) {
+	      if (section.length) {
+	        result.push(section);
+	        section = [];
+	      }
+	    }
+	    section.push(line);
+	  });
+	  if (section.length) {
+	    result.push(section);
+	  }
+	  return result;
+	}
+
+	function parseLinesDarwinNics(sections) {
+	  const nics = [];
+	  sections.forEach((section) => {
+	    const nic = {
+	      iface: '',
+	      mtu: null,
+	      mac: '',
+	      ip6: '',
+	      ip4: '',
+	      speed: null,
+	      type: '',
+	      operstate: '',
+	      duplex: '',
+	      internal: false
+	    };
+	    const first = section[0];
+	    nic.iface = first.split(':')[0].trim();
+	    const parts = first.split('> mtu');
+	    nic.mtu = parts.length > 1 ? parseInt(parts[1], 10) : null;
+	    if (isNaN(nic.mtu)) {
+	      nic.mtu = null;
+	    }
+	    nic.internal = parts[0].toLowerCase().indexOf('loopback') > -1;
+	    section.forEach((line) => {
+	      if (line.trim().startsWith('ether ')) {
+	        nic.mac = line.split('ether ')[1].toLowerCase().trim();
+	      }
+	      if (line.trim().startsWith('inet6 ') && !nic.ip6) {
+	        nic.ip6 = line.split('inet6 ')[1].toLowerCase().split('%')[0].split(' ')[0];
+	      }
+	      if (line.trim().startsWith('inet ') && !nic.ip4) {
+	        nic.ip4 = line.split('inet ')[1].toLowerCase().split(' ')[0];
+	      }
+	    });
+	    let speed = util.getValue(section, 'link rate');
+	    nic.speed = speed ? parseFloat(speed) : null;
+	    if (nic.speed === null) {
+	      speed = util.getValue(section, 'uplink rate');
+	      nic.speed = speed ? parseFloat(speed) : null;
+	      if (nic.speed !== null && speed.toLowerCase().indexOf('gbps') >= 0) {
+	        nic.speed = nic.speed * 1000;
+	      }
+	    } else {
+	      if (speed.toLowerCase().indexOf('gbps') >= 0) {
+	        nic.speed = nic.speed * 1000;
+	      }
+	    }
+	    nic.type = util.getValue(section, 'type').toLowerCase().indexOf('wi-fi') > -1 ? 'wireless' : 'wired';
+	    const operstate = util.getValue(section, 'status').toLowerCase();
+	    nic.operstate = operstate === 'active' ? 'up' : operstate === 'inactive' ? 'down' : 'unknown';
+	    nic.duplex = util.getValue(section, 'media').toLowerCase().indexOf('half-duplex') > -1 ? 'half' : 'full';
+	    if (nic.ip6 || nic.ip4 || nic.mac) {
+	      nics.push(nic);
+	    }
+	  });
+	  return nics;
+	}
+
+	function getDarwinNics() {
+	  const cmd = '/sbin/ifconfig -v';
+	  try {
+	    const lines = execSync(cmd, { maxBuffer: 1024 * 102400 })
+	      .toString()
+	      .split('\n');
+	    const nsections = splitSectionsNics(lines);
+	    return parseLinesDarwinNics(nsections);
+	  } catch {
+	    return [];
+	  }
+	}
+
+	function getLinuxIfaceConnectionName(interfaceName) {
+	  try {
+	    const output = execFileSync('nmcli', ['device', 'status'], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+	    const result = util.grep(output, interfaceName);
+
+	    const resultFormat = result.replace(/\s+/g, ' ').trim();
+	    const connectionNameLines = resultFormat.split(' ').slice(3);
+	    const connectionName = connectionNameLines.join(' ');
+	    const connectionNameSanitized = util.sanitizeString(connectionName, false);
+
+	    return connectionNameSanitized !== '--' ? connectionNameSanitized : '';
+	  } catch {
+	    return '';
+	  }
+	}
+
+	function checkLinuxDCHPInterfaces(file, depth) {
+	  let result = [];
+	  depth = depth || 0;
+	  if (depth > 10) {
+	    return result;
+	  }
+	  try {
+	    const content = readFileSync(file, { encoding: 'utf8' });
+	    const lines = content.split('\n').filter((l) => /iface|source/.test(l));
+
+	    lines.forEach((line) => {
+	      const parts = line.replace(/\s+/g, ' ').trim().split(' ');
+	      if (parts.length >= 4) {
+	        if (line.toLowerCase().indexOf(' inet ') >= 0 && line.toLowerCase().indexOf('dhcp') >= 0) {
+	          result.push(parts[1]);
+	        }
+	      }
+	      if (line.toLowerCase().includes('source')) {
+	        const file = line.split(' ')[1];
+	        result = result.concat(checkLinuxDCHPInterfaces(file, depth + 1));
+	      }
+	    });
+	  } catch {
+	    util.noop();
+	  }
+	  return result;
+	}
+
+	function getLinuxDHCPNics() {
+	  // alternate methods getting interfaces using DHCP
+	  const cmd = 'ip a 2> /dev/null';
+	  let result = [];
+	  try {
+	    const lines = execSync(cmd, util.execOptsLinux).toString().split('\n');
+	    const nsections = splitSectionsNics(lines);
+	    result = parseLinuxDHCPNics(nsections);
+	  } catch {
+	    util.noop();
+	  }
+	  try {
+	    result = checkLinuxDCHPInterfaces('/etc/network/interfaces');
+	  } catch {
+	    util.noop();
+	  }
+	  return result;
+	}
+
+	function parseLinuxDHCPNics(sections) {
+	  const result = [];
+	  if (sections && sections.length) {
+	    sections.forEach((lines) => {
+	      if (lines && lines.length) {
+	        const parts = lines[0].split(':');
+	        if (parts.length > 2) {
+	          for (let line of lines) {
+	            if (line.indexOf(' inet ') >= 0 && line.indexOf(' dynamic ') >= 0) {
+	              const parts2 = line.split(' ');
+	              const nic = parts2[parts2.length - 1].trim();
+	              result.push(nic);
+	              break;
+	            }
+	          }
+	        }
+	      }
+	    });
+	  }
+	  return result;
+	}
+
+	function getLinuxIfaceDHCPstatus(iface, connectionName, DHCPNics) {
+	  let result = false;
+	  if (connectionName) {
+	    try {
+	      const output = execFileSync('nmcli', ['connection', 'show', connectionName], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+	      const lines = util.grep(output, 'ipv4.method');
+	      const resultFormat = lines.replace(/\s+/g, ' ').trim();
+
+	      const dhcStatus = resultFormat.split(' ').slice(1).toString();
+	      switch (dhcStatus) {
+	        case 'auto':
+	          result = true;
+	          break;
+
+	        default:
+	          result = false;
+	          break;
+	      }
+	      return result;
+	    } catch {
+	      return DHCPNics.indexOf(iface) >= 0;
+	    }
+	  } else {
+	    return DHCPNics.indexOf(iface) >= 0;
+	  }
+	}
+
+	function getDarwinIfaceDHCPstatus(iface) {
+	  let result = false;
+
+	  try {
+	    const output = execFileSync('ipconfig', ['getpacket', iface], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+	    const lines = util.grep(output, 'lease_time');
+	    if (lines.length && lines[0].startsWith('lease_time')) {
+	      result = true;
+	    }
+	  } catch {
+	    util.noop();
+	  }
+	  return result;
+	}
+
+	function getLinuxIfaceDNSsuffix(connectionName) {
+	  if (connectionName) {
+	    try {
+	      const output = execFileSync('nmcli', ['connection', 'show', connectionName], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+	      const result = util.grep(output, 'ipv4.dns-search');
+	      const resultFormat = result.replace(/\s+/g, ' ').trim();
+	      const dnsSuffix = resultFormat.split(' ').slice(1).toString();
+	      return dnsSuffix === '--' ? 'Not defined' : dnsSuffix;
+	    } catch {
+	      return 'Unknown';
+	    }
+	  } else {
+	    return 'Unknown';
+	  }
+	}
+
+	function getLinuxIfaceIEEE8021xAuth(connectionName) {
+	  if (connectionName) {
+	    try {
+	      const output = execFileSync('nmcli', ['connection', 'show', connectionName], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+	      const result = util.grep(output, '802-1x.eap');
+	      const resultFormat = result.replace(/\s+/g, ' ').trim();
+	      const authenticationProtocol = resultFormat.split(' ').slice(1).toString();
+
+	      return authenticationProtocol === '--' ? '' : authenticationProtocol;
+	    } catch {
+	      return 'Not defined';
+	    }
+	  } else {
+	    return 'Not defined';
+	  }
+	}
+
+	function getLinuxIfaceIEEE8021xState(authenticationProtocol) {
+	  if (authenticationProtocol) {
+	    if (authenticationProtocol === 'Not defined') {
+	      return 'Disabled';
+	    }
+	    return 'Enabled';
+	  } else {
+	    return 'Unknown';
+	  }
+	}
+
+	function testVirtualNic(iface, ifaceName, mac) {
+	  const virtualMacs = [
+	    '00:00:00:00:00:00',
+	    '00:03:FF',
+	    '00:05:69',
+	    '00:0C:29',
+	    '00:0F:4B',
+	    '00:13:07',
+	    '00:13:BE',
+	    '00:15:5d',
+	    '00:16:3E',
+	    '00:1C:42',
+	    '00:21:F6',
+	    '00:24:0B',
+	    '00:50:56',
+	    '00:A0:B1',
+	    '00:E0:C8',
+	    '08:00:27',
+	    '0A:00:27',
+	    '18:92:2C',
+	    '16:DF:49',
+	    '3C:F3:92',
+	    '54:52:00',
+	    'FC:15:97'
+	  ];
+	  if (mac) {
+	    return (
+	      virtualMacs.filter((item) => {
+	        return mac.toUpperCase().toUpperCase().startsWith(item.substring(0, mac.length));
+	      }).length > 0 ||
+	      iface.toLowerCase().indexOf(' virtual ') > -1 ||
+	      ifaceName.toLowerCase().indexOf(' virtual ') > -1 ||
+	      iface.toLowerCase().indexOf('vethernet ') > -1 ||
+	      ifaceName.toLowerCase().indexOf('vethernet ') > -1 ||
+	      iface.toLowerCase().startsWith('veth') ||
+	      ifaceName.toLowerCase().startsWith('veth') ||
+	      iface.toLowerCase().startsWith('vboxnet') ||
+	      ifaceName.toLowerCase().startsWith('vboxnet')
+	    );
+	  } else {
+	    return false;
+	  }
+	}
+
+	function networkInterfaces(callback, rescan, defaultString) {
+	  if (typeof callback === 'string') {
+	    defaultString = callback;
+	    rescan = true;
+	    callback = null;
+	  }
+
+	  if (typeof callback === 'boolean') {
+	    rescan = callback;
+	    callback = null;
+	    defaultString = '';
+	  }
+	  if (typeof rescan === 'undefined') {
+	    rescan = true;
+	  }
+	  defaultString = defaultString || '';
+	  defaultString = '' + defaultString;
+
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      const ifaces = os.networkInterfaces();
+
+	      let result = [];
+	      let nics = [];
+	      let dnsSuffixes = [];
+	      let nics8021xInfo = [];
+	      // seperate handling in OSX
+	      if (_darwin || _freebsd || _openbsd || _netbsd) {
+	        if (JSON.stringify(ifaces) === JSON.stringify(_ifaces) && !rescan) {
+	          // no changes - just return object
+	          result = _networkInterfaces;
+
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        } else {
+	          const defaultInterface = getDefaultNetworkInterface();
+	          _ifaces = JSON.parse(JSON.stringify(ifaces));
+
+	          nics = getDarwinNics();
+
+	          nics.forEach((nic) => {
+	            let ip4link = '';
+	            let ip4linksubnet = '';
+	            let ip6link = '';
+	            let ip6linksubnet = '';
+	            nic.ip4 = '';
+	            nic.ip6 = '';
+	            if ({}.hasOwnProperty.call(ifaces, nic.iface)) {
+	              ifaces[nic.iface].forEach((details) => {
+	                if (details.family === 'IPv4' || details.family === 4) {
+	                  if (!nic.ip4 && !nic.ip4.match(/^169.254/i)) {
+	                    nic.ip4 = details.address;
+	                    nic.ip4subnet = details.netmask;
+	                  }
+	                  if (nic.ip4.match(/^169.254/i)) {
+	                    ip4link = details.address;
+	                    ip4linksubnet = details.netmask;
+	                  }
+	                }
+	                if (details.family === 'IPv6' || details.family === 6) {
+	                  if (!nic.ip6 && !nic.ip6.match(/^fe80::/i)) {
+	                    nic.ip6 = details.address;
+	                    nic.ip6subnet = details.netmask;
+	                  }
+	                  if (nic.ip6.match(/^fe80::/i)) {
+	                    ip6link = details.address;
+	                    ip6linksubnet = details.netmask;
+	                  }
+	                }
+	              });
+	            }
+	            if (!nic.ip4 && ip4link) {
+	              nic.ip4 = ip4link;
+	              nic.ip4subnet = ip4linksubnet;
+	            }
+	            if (!nic.ip6 && ip6link) {
+	              nic.ip6 = ip6link;
+	              nic.ip6subnet = ip6linksubnet;
+	            }
+
+	            const ifaceSanitized = util.sanitizeString(nic.iface);
+
+	            result.push({
+	              iface: nic.iface,
+	              ifaceName: nic.iface,
+	              default: nic.iface === defaultInterface,
+	              ip4: nic.ip4,
+	              ip4subnet: nic.ip4subnet || '',
+	              ip6: nic.ip6,
+	              ip6subnet: nic.ip6subnet || '',
+	              mac: nic.mac,
+	              internal: nic.internal,
+	              virtual: nic.internal ? false : testVirtualNic(nic.iface, nic.iface, nic.mac),
+	              operstate: nic.operstate,
+	              type: nic.type,
+	              duplex: nic.duplex,
+	              mtu: nic.mtu,
+	              speed: nic.speed,
+	              dhcp: getDarwinIfaceDHCPstatus(ifaceSanitized),
+	              dnsSuffix: '',
+	              ieee8021xAuth: '',
+	              ieee8021xState: '',
+	              carrierChanges: 0
+	            });
+	          });
+	          _networkInterfaces = result;
+	          if (defaultString.toLowerCase().indexOf('default') >= 0) {
+	            result = result.filter((item) => item.default);
+	            if (result.length > 0) {
+	              result = result[0];
+	            } else {
+	              result = [];
+	            }
+	          }
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	      if (_linux) {
+	        if (JSON.stringify(ifaces) === JSON.stringify(_ifaces) && !rescan) {
+	          // no changes - just return object
+	          result = _networkInterfaces;
+
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        } else {
+	          _ifaces = JSON.parse(JSON.stringify(ifaces));
+	          _dhcpNics = getLinuxDHCPNics();
+	          const defaultInterface = getDefaultNetworkInterface();
+	          for (let dev in ifaces) {
+	            let ip4 = '';
+	            let ip4subnet = '';
+	            let ip6 = '';
+	            let ip6subnet = '';
+	            let mac = '';
+	            let duplex = '';
+	            let mtu = '';
+	            let speed = null;
+	            let carrierChanges = 0;
+	            let dhcp = false;
+	            let dnsSuffix = '';
+	            let ieee8021xAuth = '';
+	            let ieee8021xState = '';
+	            let type = '';
+
+	            let ip4link = '';
+	            let ip4linksubnet = '';
+	            let ip6link = '';
+	            let ip6linksubnet = '';
+
+	            if ({}.hasOwnProperty.call(ifaces, dev)) {
+	              const ifaceName = dev;
+	              ifaces[dev].forEach((details) => {
+	                if (details.family === 'IPv4' || details.family === 4) {
+	                  if (!ip4 && !ip4.match(/^169.254/i)) {
+	                    ip4 = details.address;
+	                    ip4subnet = details.netmask;
+	                  }
+	                  if (ip4.match(/^169.254/i)) {
+	                    ip4link = details.address;
+	                    ip4linksubnet = details.netmask;
+	                  }
+	                }
+	                if (details.family === 'IPv6' || details.family === 6) {
+	                  if (!ip6 && !ip6.match(/^fe80::/i)) {
+	                    ip6 = details.address;
+	                    ip6subnet = details.netmask;
+	                  }
+	                  if (ip6.match(/^fe80::/i)) {
+	                    ip6link = details.address;
+	                    ip6linksubnet = details.netmask;
+	                  }
+	                }
+	                mac = details.mac;
+	                // fallback due to https://github.com/nodejs/node/issues/13581 (node 8.1 - node 8.2)
+	                const nodeMainVersion = parseInt(process.versions.node.split('.'), 10);
+	                if (mac.indexOf('00:00:0') > -1 && (_linux || _darwin) && !details.internal && nodeMainVersion >= 8 && nodeMainVersion <= 11) {
+	                  if (Object.keys(_mac).length === 0) {
+	                    _mac = getMacAddresses();
+	                  }
+	                  mac = _mac[dev] || '';
+	                }
+	              });
+	              if (!ip4 && ip4link) {
+	                ip4 = ip4link;
+	                ip4subnet = ip4linksubnet;
+	              }
+	              if (!ip6 && ip6link) {
+	                ip6 = ip6link;
+	                ip6subnet = ip6linksubnet;
+	              }
+	              const iface = dev.split(':')[0].trim();
+	              const ifaceSanitized = util.sanitizeString(iface, true);
+	              const cmd = `echo -n "addr_assign_type: "; cat /sys/class/net/${ifaceSanitized}/addr_assign_type 2>/dev/null; echo;
+            echo -n "address: "; cat /sys/class/net/${ifaceSanitized}/address 2>/dev/null; echo;
+            echo -n "addr_len: "; cat /sys/class/net/${ifaceSanitized}/addr_len 2>/dev/null; echo;
+            echo -n "broadcast: "; cat /sys/class/net/${ifaceSanitized}/broadcast 2>/dev/null; echo;
+            echo -n "carrier: "; cat /sys/class/net/${ifaceSanitized}/carrier 2>/dev/null; echo;
+            echo -n "carrier_changes: "; cat /sys/class/net/${ifaceSanitized}/carrier_changes 2>/dev/null; echo;
+            echo -n "dev_id: "; cat /sys/class/net/${ifaceSanitized}/dev_id 2>/dev/null; echo;
+            echo -n "dev_port: "; cat /sys/class/net/${ifaceSanitized}/dev_port 2>/dev/null; echo;
+            echo -n "dormant: "; cat /sys/class/net/${ifaceSanitized}/dormant 2>/dev/null; echo;
+            echo -n "duplex: "; cat /sys/class/net/${ifaceSanitized}/duplex 2>/dev/null; echo;
+            echo -n "flags: "; cat /sys/class/net/${ifaceSanitized}/flags 2>/dev/null; echo;
+            echo -n "gro_flush_timeout: "; cat /sys/class/net/${ifaceSanitized}/gro_flush_timeout 2>/dev/null; echo;
+            echo -n "ifalias: "; cat /sys/class/net/${ifaceSanitized}/ifalias 2>/dev/null; echo;
+            echo -n "ifindex: "; cat /sys/class/net/${ifaceSanitized}/ifindex 2>/dev/null; echo;
+            echo -n "iflink: "; cat /sys/class/net/${ifaceSanitized}/iflink 2>/dev/null; echo;
+            echo -n "link_mode: "; cat /sys/class/net/${ifaceSanitized}/link_mode 2>/dev/null; echo;
+            echo -n "mtu: "; cat /sys/class/net/${ifaceSanitized}/mtu 2>/dev/null; echo;
+            echo -n "netdev_group: "; cat /sys/class/net/${ifaceSanitized}/netdev_group 2>/dev/null; echo;
+            echo -n "operstate: "; cat /sys/class/net/${ifaceSanitized}/operstate 2>/dev/null; echo;
+            echo -n "proto_down: "; cat /sys/class/net/${ifaceSanitized}/proto_down 2>/dev/null; echo;
+            echo -n "speed: "; cat /sys/class/net/${ifaceSanitized}/speed 2>/dev/null; echo;
+            echo -n "tx_queue_len: "; cat /sys/class/net/${ifaceSanitized}/tx_queue_len 2>/dev/null; echo;
+            echo -n "type: "; cat /sys/class/net/${ifaceSanitized}/type 2>/dev/null; echo;
+            echo -n "wireless: "; cat /proc/net/wireless 2>/dev/null | grep ${ifaceSanitized}; echo;
+            echo -n "wirelessspeed: "; iw dev ${ifaceSanitized} link 2>&1 | grep bitrate; echo;`;
+
+	              let lines = [];
+	              try {
+	                lines = execSync(cmd, util.execOptsLinux).toString().split('\n');
+	                const connectionName = getLinuxIfaceConnectionName(ifaceSanitized);
+	                dhcp = getLinuxIfaceDHCPstatus(ifaceSanitized, connectionName, _dhcpNics);
+	                dnsSuffix = getLinuxIfaceDNSsuffix(connectionName);
+	                ieee8021xAuth = getLinuxIfaceIEEE8021xAuth(connectionName);
+	                ieee8021xState = getLinuxIfaceIEEE8021xState(ieee8021xAuth);
+	              } catch {
+	                util.noop();
+	              }
+	              duplex = util.getValue(lines, 'duplex');
+	              duplex = duplex.startsWith('cat') ? '' : duplex;
+	              mtu = parseInt(util.getValue(lines, 'mtu'), 10);
+	              let myspeed = parseInt(util.getValue(lines, 'speed'), 10);
+	              speed = isNaN(myspeed) ? null : myspeed;
+	              const wirelessspeed = util.getValue(lines, 'tx bitrate');
+	              if (speed === null && wirelessspeed) {
+	                myspeed = parseFloat(wirelessspeed);
+	                speed = isNaN(myspeed) ? null : myspeed;
+	              }
+	              carrierChanges = parseInt(util.getValue(lines, 'carrier_changes'), 10);
+	              const operstate = util.getValue(lines, 'operstate');
+	              type = operstate === 'up' ? (util.getValue(lines, 'wireless').trim() ? 'wireless' : 'wired') : 'unknown';
+	              if (ifaceSanitized === 'lo' || ifaceSanitized.startsWith('bond')) {
+	                type = 'virtual';
+	              }
+
+	              let internal = ifaces[dev] && ifaces[dev][0] ? ifaces[dev][0].internal : false;
+	              if (dev.toLowerCase().indexOf('loopback') > -1 || ifaceName.toLowerCase().indexOf('loopback') > -1) {
+	                internal = true;
+	              }
+	              const virtual = internal ? false : testVirtualNic(dev, ifaceName, mac);
+	              result.push({
+	                iface: ifaceSanitized,
+	                ifaceName,
+	                default: iface === defaultInterface,
+	                ip4,
+	                ip4subnet,
+	                ip6,
+	                ip6subnet,
+	                mac,
+	                internal,
+	                virtual,
+	                operstate,
+	                type,
+	                duplex,
+	                mtu,
+	                speed,
+	                dhcp,
+	                dnsSuffix,
+	                ieee8021xAuth,
+	                ieee8021xState,
+	                carrierChanges
+	              });
+	            }
+	          }
+	          _networkInterfaces = result;
+	          if (defaultString.toLowerCase().indexOf('default') >= 0) {
+	            result = result.filter((item) => item.default);
+	            if (result.length > 0) {
+	              result = result[0];
+	            } else {
+	              result = [];
+	            }
+	          }
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	      if (_windows) {
+	        if (JSON.stringify(ifaces) === JSON.stringify(_ifaces) && !rescan) {
+	          // no changes - just return object
+	          result = _networkInterfaces;
+
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        } else {
+	          _ifaces = JSON.parse(JSON.stringify(ifaces));
+	          const defaultInterface = getDefaultNetworkInterface();
+
+	          getWindowsNics().then((nics) => {
+	            nics.forEach((nic) => {
+	              let found = false;
+	              Object.keys(ifaces).forEach((key) => {
+	                if (!found) {
+	                  ifaces[key].forEach((value) => {
+	                    if (Object.keys(value).indexOf('mac') >= 0) {
+	                      found = value['mac'] === nic.mac;
+	                    }
+	                  });
+	                }
+	              });
+
+	              if (!found) {
+	                ifaces[nic.name] = [{ mac: nic.mac }];
+	              }
+	            });
+	            nics8021xInfo = getWindowsWiredProfilesInformation();
+	            dnsSuffixes = getWindowsDNSsuffixes();
+	            for (let dev in ifaces) {
+	              const ifaceSanitized = util.sanitizeString(dev);
+
+	              let iface = dev;
+	              let ip4 = '';
+	              let ip4subnet = '';
+	              let ip6 = '';
+	              let ip6subnet = '';
+	              let mac = '';
+	              let duplex = '';
+	              let mtu = '';
+	              let speed = null;
+	              let carrierChanges = 0;
+	              let operstate = 'down';
+	              let dhcp = false;
+	              let dnsSuffix = '';
+	              let ieee8021xAuth = '';
+	              let ieee8021xState = '';
+	              let type = '';
+
+	              if ({}.hasOwnProperty.call(ifaces, dev)) {
+	                let ifaceName = dev;
+	                ifaces[dev].forEach((details) => {
+	                  if (details.family === 'IPv4' || details.family === 4) {
+	                    ip4 = details.address;
+	                    ip4subnet = details.netmask;
+	                  }
+	                  if (details.family === 'IPv6' || details.family === 6) {
+	                    if (!ip6 || ip6.match(/^fe80::/i)) {
+	                      ip6 = details.address;
+	                      ip6subnet = details.netmask;
+	                    }
+	                  }
+	                  mac = details.mac;
+	                  // fallback due to https://github.com/nodejs/node/issues/13581 (node 8.1 - node 8.2)
+	                  const nodeMainVersion = parseInt(process.versions.node.split('.'), 10);
+	                  if (mac.indexOf('00:00:0') > -1 && (_linux || _darwin) && !details.internal && nodeMainVersion >= 8 && nodeMainVersion <= 11) {
+	                    if (Object.keys(_mac).length === 0) {
+	                      _mac = getMacAddresses();
+	                    }
+	                    mac = _mac[dev] || '';
+	                  }
+	                });
+
+	                dnsSuffix = getWindowsIfaceDNSsuffix(dnsSuffixes.ifaces, ifaceSanitized);
+	                let foundFirst = false;
+	                nics.forEach((detail) => {
+	                  if (detail.mac === mac && !foundFirst) {
+	                    iface = detail.iface || iface;
+	                    ifaceName = detail.name;
+	                    dhcp = detail.dhcp;
+	                    operstate = detail.operstate;
+	                    speed = operstate === 'up' ? detail.speed : 0;
+	                    type = detail.type;
+	                    foundFirst = true;
+	                  }
+	                });
+
+	                if (
+	                  dev.toLowerCase().indexOf('wlan') >= 0 ||
+	                  ifaceName.toLowerCase().indexOf('wlan') >= 0 ||
+	                  ifaceName.toLowerCase().indexOf('802.11n') >= 0 ||
+	                  ifaceName.toLowerCase().indexOf('wireless') >= 0 ||
+	                  ifaceName.toLowerCase().indexOf('wi-fi') >= 0 ||
+	                  ifaceName.toLowerCase().indexOf('wifi') >= 0
+	                ) {
+	                  type = 'wireless';
+	                }
+
+	                const IEEE8021x = getWindowsIEEE8021x(type, ifaceSanitized, nics8021xInfo);
+	                ieee8021xAuth = IEEE8021x.protocol;
+	                ieee8021xState = IEEE8021x.state;
+	                let internal = ifaces[dev] && ifaces[dev][0] ? ifaces[dev][0].internal : false;
+	                if (dev.toLowerCase().indexOf('loopback') > -1 || ifaceName.toLowerCase().indexOf('loopback') > -1) {
+	                  internal = true;
+	                }
+	                const virtual = internal ? false : testVirtualNic(dev, ifaceName, mac);
+	                result.push({
+	                  iface,
+	                  ifaceName,
+	                  default: iface === defaultInterface,
+	                  ip4,
+	                  ip4subnet,
+	                  ip6,
+	                  ip6subnet,
+	                  mac,
+	                  internal,
+	                  virtual,
+	                  operstate,
+	                  type,
+	                  duplex,
+	                  mtu,
+	                  speed,
+	                  dhcp,
+	                  dnsSuffix,
+	                  ieee8021xAuth,
+	                  ieee8021xState,
+	                  carrierChanges
+	                });
+	              }
+	            }
+	            _networkInterfaces = result;
+	            if (defaultString.toLowerCase().indexOf('default') >= 0) {
+	              result = result.filter((item) => item.default);
+	              if (result.length > 0) {
+	                result = result[0];
+	              } else {
+	                result = [];
+	              }
+	            }
+	            if (callback) {
+	              callback(result);
+	            }
+	            resolve(result);
+	          });
+	        }
+	      }
+	    });
+	  });
+	}
+
+	network.networkInterfaces = networkInterfaces;
+
+	// --------------------------
+	// NET - Speed
+
+	function calcNetworkSpeed(iface, rx_bytes, tx_bytes, operstate, rx_dropped, rx_errors, tx_dropped, tx_errors) {
+	  const result = {
+	    iface,
+	    operstate,
+	    rx_bytes,
+	    rx_dropped,
+	    rx_errors,
+	    tx_bytes,
+	    tx_dropped,
+	    tx_errors,
+	    rx_sec: null,
+	    tx_sec: null,
+	    ms: 0
+	  };
+
+	  if (_network[iface] && _network[iface].ms) {
+	    result.ms = Date.now() - _network[iface].ms;
+	    result.rx_sec = rx_bytes - _network[iface].rx_bytes >= 0 ? (rx_bytes - _network[iface].rx_bytes) / (result.ms / 1000) : 0;
+	    result.tx_sec = tx_bytes - _network[iface].tx_bytes >= 0 ? (tx_bytes - _network[iface].tx_bytes) / (result.ms / 1000) : 0;
+	    _network[iface].rx_bytes = rx_bytes;
+	    _network[iface].tx_bytes = tx_bytes;
+	    _network[iface].rx_sec = result.rx_sec;
+	    _network[iface].tx_sec = result.tx_sec;
+	    _network[iface].ms = Date.now();
+	    _network[iface].last_ms = result.ms;
+	    _network[iface].operstate = operstate;
+	  } else {
+	    if (!_network[iface]) {
+	      _network[iface] = {};
+	    }
+	    _network[iface].rx_bytes = rx_bytes;
+	    _network[iface].tx_bytes = tx_bytes;
+	    _network[iface].rx_sec = null;
+	    _network[iface].tx_sec = null;
+	    _network[iface].ms = Date.now();
+	    _network[iface].last_ms = 0;
+	    _network[iface].operstate = operstate;
+	  }
+	  return result;
+	}
+
+	function networkStats(ifaces, callback) {
+	  let ifacesArray = [];
+
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      // fallback - if only callback is given
+	      if (util.isFunction(ifaces) && !callback) {
+	        callback = ifaces;
+	        ifacesArray = [getDefaultNetworkInterface()];
+	      } else {
+	        if (typeof ifaces !== 'string' && ifaces !== undefined) {
+	          if (callback) {
+	            callback([]);
+	          }
+	          return resolve([]);
+	        }
+	        ifaces = ifaces || getDefaultNetworkInterface();
+
+	        try {
+	          ifaces.__proto__.toLowerCase = util.stringToLower;
+	          ifaces.__proto__.replace = util.stringReplace;
+	          ifaces.__proto__.toString = util.stringToString;
+	          ifaces.__proto__.substr = util.stringSubstr;
+	          ifaces.__proto__.substring = util.stringSubstring;
+	          ifaces.__proto__.trim = util.stringTrim;
+	          ifaces.__proto__.startsWith = util.stringStartWith;
+	        } catch {
+	          Object.setPrototypeOf(ifaces, util.stringObj);
+	        }
+
+	        ifaces = ifaces.trim().replace(/,+/g, '|');
+	        ifacesArray = ifaces.split('|');
+	      }
+
+	      const result = [];
+
+	      const workload = [];
+	      if (ifacesArray.length && ifacesArray[0].trim() === '*') {
+	        ifacesArray = [];
+	        networkInterfaces(false).then((allIFaces) => {
+	          for (let iface of allIFaces) {
+	            ifacesArray.push(iface.iface);
+	          }
+	          networkStats(ifacesArray.join(',')).then((result) => {
+	            if (callback) {
+	              callback(result);
+	            }
+	            resolve(result);
+	          });
+	        });
+	      } else {
+	        for (let iface of ifacesArray) {
+	          workload.push(networkStatsSingle(iface.trim()));
+	        }
+	        if (workload.length) {
+	          Promise.all(workload).then((data) => {
+	            if (callback) {
+	              callback(data);
+	            }
+	            resolve(data);
+	          });
+	        } else {
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	    });
+	  });
+	}
+
+	function networkStatsSingle(iface) {
+	  function parseLinesWindowsPerfData(sections) {
+	    const perfData = [];
+	    for (let i in sections) {
+	      if ({}.hasOwnProperty.call(sections, i)) {
+	        if (sections[i].trim() !== '') {
+	          const lines = sections[i].trim().split('\r\n');
+	          perfData.push({
+	            name: util.getValue(lines, 'Name', ':').toLowerCase(),
+	            desc: util
+	              .getValue(lines, 'InterfaceDescription', ':')
+	              .replace(/[()[\] ]+/g, '')
+	              .replace(/#|\//g, '_')
+	              .toLowerCase(),
+	            rx_bytes: parseInt(util.getValue(lines, 'ReceivedBytes', ':'), 10),
+	            rx_errors: parseInt(util.getValue(lines, 'ReceivedPacketErrors', ':'), 10),
+	            rx_dropped: parseInt(util.getValue(lines, 'ReceivedDiscardedPackets', ':'), 10),
+	            tx_bytes: parseInt(util.getValue(lines, 'SentBytes', ':'), 10),
+	            tx_errors: parseInt(util.getValue(lines, 'OutboundPacketErrors', ':'), 10),
+	            tx_dropped: parseInt(util.getValue(lines, 'OutboundDiscardedPackets', ':'), 10)
+	          });
+	        }
+	      }
+	    }
+	    return perfData;
+	  }
+
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      const ifaceSanitized = util.sanitizeString(iface, true);
+
+	      let result = {
+	        iface: ifaceSanitized,
+	        operstate: 'unknown',
+	        rx_bytes: 0,
+	        rx_dropped: 0,
+	        rx_errors: 0,
+	        tx_bytes: 0,
+	        tx_dropped: 0,
+	        tx_errors: 0,
+	        rx_sec: null,
+	        tx_sec: null,
+	        ms: 0
+	      };
+
+	      // an interface name never starts with a dash - passed on to ifconfig / netstat it would be
+	      // read as an option instead of as an interface name (index access, so a polluted
+	      // String.prototype cannot bypass it)
+	      if (ifaceSanitized[0] === '-') {
+	        return resolve(result);
+	      }
+
+	      let operstate = 'unknown';
+	      let rx_bytes = 0;
+	      let tx_bytes = 0;
+	      let rx_dropped = 0;
+	      let rx_errors = 0;
+	      let tx_dropped = 0;
+	      let tx_errors = 0;
+
+	      let cmd, lines, stats;
+	      if (
+	        !_network[ifaceSanitized] ||
+	        (_network[ifaceSanitized] && !_network[ifaceSanitized].ms) ||
+	        (_network[ifaceSanitized] && _network[ifaceSanitized].ms && Date.now() - _network[ifaceSanitized].ms >= 500)
+	      ) {
+	        if (_linux) {
+	          // interface name must stay a single path segment inside /sys/class/net (no traversal)
+	          const ifaceIsSegment = ifaceSanitized !== '' && ifaceSanitized !== '.' && ifaceSanitized !== '..' && ifaceSanitized.split('').every((c) => c !== '/');
+	          if (ifaceIsSegment && fs.existsSync('/sys/class/net/' + ifaceSanitized)) {
+	            cmd =
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/operstate; ' +
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/statistics/rx_bytes; ' +
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/statistics/tx_bytes; ' +
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/statistics/rx_dropped; ' +
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/statistics/rx_errors; ' +
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/statistics/tx_dropped; ' +
+	              'cat /sys/class/net/' +
+	              ifaceSanitized +
+	              '/statistics/tx_errors; ';
+	            exec(cmd, (error, stdout) => {
+	              if (!error) {
+	                lines = stdout.toString().split('\n');
+	                operstate = lines[0].trim();
+	                rx_bytes = parseInt(lines[1], 10);
+	                tx_bytes = parseInt(lines[2], 10);
+	                rx_dropped = parseInt(lines[3], 10);
+	                rx_errors = parseInt(lines[4], 10);
+	                tx_dropped = parseInt(lines[5], 10);
+	                tx_errors = parseInt(lines[6], 10);
+
+	                result = calcNetworkSpeed(ifaceSanitized, rx_bytes, tx_bytes, operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
+	              }
+	              resolve(result);
+	            });
+	          } else {
+	            resolve(result);
+	          }
+	        }
+	        if (_freebsd || _openbsd || _netbsd) {
+	          cmd = 'netstat -ibndI ' + ifaceSanitized; // lgtm [js/shell-command-constructed-from-input]
+	          exec(cmd, (error, stdout) => {
+	            if (!error) {
+	              lines = stdout.toString().split('\n');
+	              for (let i = 1; i < lines.length; i++) {
+	                const line = lines[i].replace(/ +/g, ' ').split(' ');
+	                if (line && line[0] && line[7] && line[10]) {
+	                  rx_bytes = rx_bytes + parseInt(line[7]);
+	                  if (line[6].trim() !== '-') {
+	                    rx_dropped = rx_dropped + parseInt(line[6]);
+	                  }
+	                  if (line[5].trim() !== '-') {
+	                    rx_errors = rx_errors + parseInt(line[5]);
+	                  }
+	                  tx_bytes = tx_bytes + parseInt(line[10]);
+	                  if (line[12] && line[12].trim() !== '-') {
+	                    tx_dropped = tx_dropped + parseInt(line[12]);
+	                  }
+	                  if (line[9].trim() !== '-') {
+	                    tx_errors = tx_errors + parseInt(line[9]);
+	                  }
+	                  operstate = 'up';
+	                }
+	              }
+	              result = calcNetworkSpeed(ifaceSanitized, rx_bytes, tx_bytes, operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
+	            }
+	            resolve(result);
+	          });
+	        }
+	        if (_darwin) {
+	          cmd = 'ifconfig ' + ifaceSanitized + ' | grep "status"'; // lgtm [js/shell-command-constructed-from-input]
+	          exec(cmd, (error, stdout) => {
+	            result.operstate = (stdout.toString().split(':')[1] || '').trim();
+	            result.operstate = (result.operstate || '').toLowerCase();
+	            result.operstate = result.operstate === 'active' ? 'up' : result.operstate === 'inactive' ? 'down' : 'unknown';
+	            cmd = 'netstat -bdnI ' + ifaceSanitized; // lgtm [js/shell-command-constructed-from-input]
+	            exec(cmd, (error, stdout) => {
+	              if (!error) {
+	                lines = stdout.toString().split('\n');
+	                // if there is less than 2 lines, no information for this interface was found
+	                if (lines.length > 1 && lines[1].trim() !== '') {
+	                  // skip header line
+	                  // use the second line because it is tied to the NIC instead of the ipv4 or ipv6 address
+	                  stats = lines[1].replace(/ +/g, ' ').split(' ');
+	                  const offset = stats.length > 11 ? 1 : 0;
+	                  rx_bytes = parseInt(stats[offset + 5]);
+	                  rx_dropped = parseInt(stats[offset + 10]);
+	                  rx_errors = parseInt(stats[offset + 4]);
+	                  tx_bytes = parseInt(stats[offset + 8]);
+	                  tx_dropped = parseInt(stats[offset + 10]);
+	                  tx_errors = parseInt(stats[offset + 7]);
+	                  result = calcNetworkSpeed(ifaceSanitized, rx_bytes, tx_bytes, result.operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
+	                }
+	              }
+	              resolve(result);
+	            });
+	          });
+	        }
+	        if (_windows) {
+	          let perfData = [];
+	          let ifaceName = ifaceSanitized;
+
+	          // Performance Data
+	          util
+	            .powerShell(
+	              'Get-NetAdapterStatistics | select Name,InterfaceDescription,ReceivedBytes,ReceivedPacketErrors,ReceivedDiscardedPackets,SentBytes,OutboundPacketErrors,OutboundDiscardedPackets | fl'
+	            )
+	            .then((stdout, error) => {
+	              if (!error) {
+	                const psections = stdout.toString().split(/\n\s*\n/);
+	                perfData = parseLinesWindowsPerfData(psections);
+	              }
+
+	              // Network Interfaces
+	              networkInterfaces(false).then((interfaces) => {
+	                // get bytes sent, received from perfData by name
+	                rx_bytes = 0;
+	                tx_bytes = 0;
+	                perfData.forEach((detail) => {
+	                  interfaces.forEach((det) => {
+	                    if (
+	                      (det.iface.toLowerCase() === ifaceSanitized.toLowerCase() ||
+	                        det.mac.toLowerCase() === ifaceSanitized.toLowerCase() ||
+	                        det.ip4.toLowerCase() === ifaceSanitized.toLowerCase() ||
+	                        det.ip6.toLowerCase() === ifaceSanitized.toLowerCase() ||
+	                        det.ifaceName
+	                          .replace(/[()[\] ]+/g, '')
+	                          .replace(/#|\//g, '_')
+	                          .toLowerCase() ===
+	                          ifaceSanitized
+	                            .replace(/[()[\] ]+/g, '')
+	                            .replace('#', '_')
+	                            .toLowerCase()) &&
+	                      (det.iface.toLowerCase() === detail.name ||
+	                        det.ifaceName
+	                          .replace(/[()[\] ]+/g, '')
+	                          .replace(/#|\//g, '_')
+	                          .toLowerCase() === detail.desc)
+	                    ) {
+	                      ifaceName = det.iface;
+	                      rx_bytes = detail.rx_bytes;
+	                      rx_dropped = detail.rx_dropped;
+	                      rx_errors = detail.rx_errors;
+	                      tx_bytes = detail.tx_bytes;
+	                      tx_dropped = detail.tx_dropped;
+	                      tx_errors = detail.tx_errors;
+	                      operstate = det.operstate;
+	                    }
+	                  });
+	                });
+	                if (rx_bytes && tx_bytes) {
+	                  // cache under the requested name, but report the adapter name
+	                  result = calcNetworkSpeed(ifaceSanitized, parseInt(rx_bytes), parseInt(tx_bytes), operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
+	                  result.iface = ifaceName;
+	                  _network[ifaceSanitized].ifaceName = ifaceName;
+	                }
+	                resolve(result);
+	              });
+	            });
+	        }
+	      } else {
+	        result.rx_bytes = _network[ifaceSanitized].rx_bytes;
+	        result.tx_bytes = _network[ifaceSanitized].tx_bytes;
+	        result.rx_sec = _network[ifaceSanitized].rx_sec;
+	        result.tx_sec = _network[ifaceSanitized].tx_sec;
+	        result.ms = _network[ifaceSanitized].last_ms;
+	        result.operstate = _network[ifaceSanitized].operstate;
+	        result.iface = _network[ifaceSanitized].ifaceName || ifaceSanitized;
+	        resolve(result);
+	      }
+	    });
+	  });
+	}
+
+	network.networkStats = networkStats;
+
+	// --------------------------
+	// NET - connections (sockets)
+
+	function getProcessName(processes, pid) {
+	  let cmd = '';
+	  processes.forEach((line) => {
+	    const parts = line.split(' ');
+	    const id = parseInt(parts[0], 10) || -1;
+	    if (id === pid) {
+	      parts.shift();
+	      cmd = parts.join(' ').split(':')[0];
+	    }
+	  });
+	  cmd = cmd.split(' -')[0];
+	  cmd = cmd.split(' /')[0];
+	  return cmd;
+	  // const cmdParts = cmd.split('/');
+	  // return cmdParts[cmdParts.length - 1];
+	}
+
+	function networkConnections(callback) {
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      const result = [];
+	      if (_linux || _freebsd || _openbsd || _netbsd) {
+	        let cmd =
+	          'export LC_ALL=C; netstat -tunap | grep "ESTABLISHED\\|SYN_SENT\\|SYN_RECV\\|FIN_WAIT1\\|FIN_WAIT2\\|TIME_WAIT\\|CLOSE\\|CLOSE_WAIT\\|LAST_ACK\\|LISTEN\\|CLOSING\\|UNKNOWN"; unset LC_ALL';
+	        if (_freebsd || _openbsd || _netbsd) {
+	          cmd =
+	            'export LC_ALL=C; netstat -na | grep "ESTABLISHED\\|SYN_SENT\\|SYN_RECV\\|FIN_WAIT1\\|FIN_WAIT2\\|TIME_WAIT\\|CLOSE\\|CLOSE_WAIT\\|LAST_ACK\\|LISTEN\\|CLOSING\\|UNKNOWN"; unset LC_ALL';
+	        }
+	        exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	          let lines = stdout.toString().split('\n');
+	          if (!error && (lines.length > 1 || lines[0] !== '')) {
+	            lines.forEach((line) => {
+	              line = line.replace(/ +/g, ' ').split(' ');
+	              if (line.length >= 7) {
+	                let localip = line[3];
+	                let localport = '';
+	                const localaddress = line[3].split(':');
+	                if (localaddress.length > 1) {
+	                  localport = localaddress[localaddress.length - 1];
+	                  localaddress.pop();
+	                  localip = localaddress.join(':');
+	                }
+	                let peerip = line[4];
+	                let peerport = '';
+	                const peeraddress = line[4].split(':');
+	                if (peeraddress.length > 1) {
+	                  peerport = peeraddress[peeraddress.length - 1];
+	                  peeraddress.pop();
+	                  peerip = peeraddress.join(':');
+	                }
+	                const connstate = line[5];
+	                const proc = line[6].split('/');
+
+	                if (connstate) {
+	                  result.push({
+	                    protocol: line[0],
+	                    localAddress: localip,
+	                    localPort: localport,
+	                    peerAddress: peerip,
+	                    peerPort: peerport,
+	                    state: connstate,
+	                    pid: proc[0] && proc[0] !== '-' ? parseInt(proc[0], 10) : null,
+	                    process: proc[1] ? proc[1].split(' ')[0].split(':')[0] : ''
+	                  });
+	                }
+	              }
+	            });
+	            if (callback) {
+	              callback(result);
+	            }
+	            resolve(result);
+	          } else {
+	            cmd = 'ss -tunap | grep "ESTAB\\|SYN-SENT\\|SYN-RECV\\|FIN-WAIT1\\|FIN-WAIT2\\|TIME-WAIT\\|CLOSE\\|CLOSE-WAIT\\|LAST-ACK\\|LISTEN\\|CLOSING"';
+	            exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	              if (!error) {
+	                const lines = stdout.toString().split('\n');
+	                lines.forEach((line) => {
+	                  line = line.replace(/ +/g, ' ').split(' ');
+	                  if (line.length >= 6) {
+	                    let localip = line[4];
+	                    let localport = '';
+	                    const localaddress = line[4].split(':');
+	                    if (localaddress.length > 1) {
+	                      localport = localaddress[localaddress.length - 1];
+	                      localaddress.pop();
+	                      localip = localaddress.join(':');
+	                    }
+	                    let peerip = line[5];
+	                    let peerport = '';
+	                    const peeraddress = line[5].split(':');
+	                    if (peeraddress.length > 1) {
+	                      peerport = peeraddress[peeraddress.length - 1];
+	                      peeraddress.pop();
+	                      peerip = peeraddress.join(':');
+	                    }
+	                    let connstate = line[1];
+	                    if (connstate === 'ESTAB') {
+	                      connstate = 'ESTABLISHED';
+	                    }
+	                    if (connstate === 'TIME-WAIT') {
+	                      connstate = 'TIME_WAIT';
+	                    }
+	                    let pid = null;
+	                    let process = '';
+	                    if (line.length >= 7 && line[6].indexOf('users:') > -1) {
+	                      const proc = line[6].replace('users:(("', '').replace(/"/g, '').replace('pid=', '').split(',');
+	                      if (proc.length > 2) {
+	                        process = proc[0];
+	                        const pidValue = parseInt(proc[1], 10);
+	                        if (pidValue > 0) {
+	                          pid = pidValue;
+	                        }
+	                      }
+	                    }
+	                    if (connstate) {
+	                      result.push({
+	                        protocol: line[0],
+	                        localAddress: localip,
+	                        localPort: localport,
+	                        peerAddress: peerip,
+	                        peerPort: peerport,
+	                        state: connstate,
+	                        pid,
+	                        process
+	                      });
+	                    }
+	                  }
+	                });
+	              }
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            });
+	          }
+	        });
+	      }
+	      if (_darwin) {
+	        const cmd = 'netstat -natvln | head -n2; netstat -natvln | grep "tcp4\\|tcp6\\|udp4\\|udp6"';
+	        const states = 'ESTABLISHED|SYN_SENT|SYN_RECV|FIN_WAIT1|FIN_WAIT_1|FIN_WAIT2|FIN_WAIT_2|TIME_WAIT|CLOSE|CLOSE_WAIT|LAST_ACK|LISTEN|CLOSING|UNKNOWN'.split('|');
+	        exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	          if (!error) {
+	            exec('ps -axo pid,command', { maxBuffer: 1024 * 102400 }, (err2, stdout2) => {
+	              let processes = stdout2.toString().split('\n');
+	              processes = processes.map((line) => {
+	                return line.trim().replace(/ +/g, ' ');
+	              });
+	              const lines = stdout.toString().split('\n');
+	              lines.shift();
+	              let pidPos = 8;
+	              if (lines.length > 1 && lines[0].indexOf('pid') > 0) {
+	                const header = (lines.shift() || '')
+	                  .replace(/ Address/g, '_Address')
+	                  .replace(/process:/g, '')
+	                  .replace(/ +/g, ' ')
+	                  .split(' ');
+	                pidPos = header.indexOf('pid');
+	              }
+	              lines.forEach((line) => {
+	                line = line.replace(/ +/g, ' ').split(' ');
+	                if (line.length >= 8) {
+	                  let localip = line[3];
+	                  let localport = '';
+	                  const localaddress = line[3].split('.');
+	                  if (localaddress.length > 1) {
+	                    localport = localaddress[localaddress.length - 1];
+	                    localaddress.pop();
+	                    localip = localaddress.join('.');
+	                  }
+	                  let peerip = line[4];
+	                  let peerport = '';
+	                  const peeraddress = line[4].split('.');
+	                  if (peeraddress.length > 1) {
+	                    peerport = peeraddress[peeraddress.length - 1];
+	                    peeraddress.pop();
+	                    peerip = peeraddress.join('.');
+	                  }
+	                  const hasState = states.indexOf(line[5]) >= 0;
+	                  const connstate = hasState ? line[5] : 'UNKNOWN';
+	                  let pidField = '';
+	                  if (line[line.length - 9] && line[line.length - 9].indexOf(':') >= 0) {
+	                    pidField = line[line.length - 9].split(':')[1];
+	                  } else {
+	                    pidField = line[pidPos + (hasState ? 0 : -1)] || '';
+
+	                    if (pidField.indexOf(':') >= 0) {
+	                      pidField = pidField.split(':')[1];
+	                    }
+	                  }
+	                  const pid = parseInt(pidField, 10);
+	                  if (connstate) {
+	                    result.push({
+	                      protocol: line[0],
+	                      localAddress: localip,
+	                      localPort: localport,
+	                      peerAddress: peerip,
+	                      peerPort: peerport,
+	                      state: connstate,
+	                      pid: pid,
+	                      process: getProcessName(processes, pid)
+	                    });
+	                  }
+	                }
+	              });
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            });
+	          } else {
+	            if (callback) {
+	              callback(result);
+	            }
+	            resolve(result);
+	          }
+	        });
+	      }
+	      if (_windows) {
+	        let cmd = 'netstat -nao';
+	        try {
+	          exec(cmd, util.execOptsWin, (error, stdout) => {
+	            if (!error) {
+	              let lines = stdout.toString().split('\r\n');
+
+	              lines.forEach((line) => {
+	                line = line.trim().replace(/ +/g, ' ').split(' ');
+	                if (line.length >= 4) {
+	                  let localip = line[1];
+	                  let localport = '';
+	                  const localaddress = line[1].split(':');
+	                  if (localaddress.length > 1) {
+	                    localport = localaddress[localaddress.length - 1];
+	                    localaddress.pop();
+	                    localip = localaddress.join(':');
+	                  }
+	                  localip = localip.replace(/\[/g, '').replace(/\]/g, '');
+	                  let peerip = line[2];
+	                  let peerport = '';
+	                  const peeraddress = line[2].split(':');
+	                  if (peeraddress.length > 1) {
+	                    peerport = peeraddress[peeraddress.length - 1];
+	                    peeraddress.pop();
+	                    peerip = peeraddress.join(':');
+	                  }
+	                  peerip = peerip.replace(/\[/g, '').replace(/\]/g, '');
+	                  const pid = util.toInt(line[4]);
+	                  let connstate = line[3];
+	                  if (connstate === 'HERGESTELLT') {
+	                    connstate = 'ESTABLISHED';
+	                  }
+	                  if (connstate.startsWith('ABH')) {
+	                    connstate = 'LISTEN';
+	                  }
+	                  if (connstate === 'SCHLIESSEN_WARTEN') {
+	                    connstate = 'CLOSE_WAIT';
+	                  }
+	                  if (connstate === 'WARTEND') {
+	                    connstate = 'TIME_WAIT';
+	                  }
+	                  if (connstate === 'SYN_GESENDET') {
+	                    connstate = 'SYN_SENT';
+	                  }
+
+	                  if (connstate === 'LISTENING') {
+	                    connstate = 'LISTEN';
+	                  }
+	                  if (connstate === 'SYN_RECEIVED') {
+	                    connstate = 'SYN_RECV';
+	                  }
+	                  if (connstate === 'FIN_WAIT_1') {
+	                    connstate = 'FIN_WAIT1';
+	                  }
+	                  if (connstate === 'FIN_WAIT_2') {
+	                    connstate = 'FIN_WAIT2';
+	                  }
+	                  if (line[0].toLowerCase() !== 'udp' && connstate) {
+	                    result.push({
+	                      protocol: line[0].toLowerCase(),
+	                      localAddress: localip,
+	                      localPort: localport,
+	                      peerAddress: peerip,
+	                      peerPort: peerport,
+	                      state: connstate,
+	                      pid,
+	                      process: ''
+	                    });
+	                  } else if (line[0].toLowerCase() === 'udp') {
+	                    result.push({
+	                      protocol: line[0].toLowerCase(),
+	                      localAddress: localip,
+	                      localPort: localport,
+	                      peerAddress: peerip,
+	                      peerPort: peerport,
+	                      state: '',
+	                      pid: parseInt(line[3], 10),
+	                      process: ''
+	                    });
+	                  }
+	                }
+	              });
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            } else {
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            }
+	          });
+	        } catch {
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	    });
+	  });
+	}
+
+	network.networkConnections = networkConnections;
+
+	function networkGatewayDefault(callback) {
+	  return new Promise((resolve) => {
+	    process.nextTick(() => {
+	      let result = '';
+	      if (_linux || _freebsd || _openbsd || _netbsd) {
+	        const cmd = 'ip route get 1';
+	        try {
+	          exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	            if (!error) {
+	              let lines = stdout.toString().split('\n');
+	              const line = lines && lines[0] ? lines[0] : '';
+	              let parts = line.split(' via ');
+	              if (parts && parts[1]) {
+	                parts = parts[1].split(' ');
+	                result = parts[0];
+	              }
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            } else {
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            }
+	          });
+	        } catch {
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	      if (_darwin) {
+	        let cmd = 'route -n get default';
+	        try {
+	          exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	            if (!error) {
+	              const lines = stdout
+	                .toString()
+	                .split('\n')
+	                .map((line) => line.trim());
+	              result = util.getValue(lines, 'gateway');
+	            }
+	            if (!result) {
+	              cmd = "netstat -rn | awk '/default/ {print $2}'";
+	              exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	                const lines = stdout
+	                  .toString()
+	                  .split('\n')
+	                  .map((line) => line.trim());
+	                result = lines.find((line) =>
+	                  /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(line)
+	                );
+	                if (callback) {
+	                  callback(result);
+	                }
+	                resolve(result);
+	              });
+	            } else {
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            }
+	          });
+	        } catch {
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	      if (_windows) {
+	        try {
+	          exec('netstat -r', util.execOptsWin, (error, stdout) => {
+	            const lines = stdout.toString().split(os.EOL);
+	            lines.forEach((line) => {
+	              line = line.replace(/\s+/g, ' ').trim();
+	              if (line.indexOf('0.0.0.0 0.0.0.0') > -1 && !/[a-zA-Z]/.test(line)) {
+	                const parts = line.split(' ');
+	                if (parts.length >= 5 && parts[parts.length - 3].indexOf('.') > -1) {
+	                  result = parts[parts.length - 3];
+	                }
+	              }
+	            });
+	            if (!result) {
+	              util.powerShell("Get-CimInstance -ClassName Win32_IP4RouteTable | Where-Object { $_.Destination -eq '0.0.0.0' -and $_.Mask -eq '0.0.0.0' }").then((data) => {
+	                let lines = data.toString().split('\r\n');
+	                if (lines.length > 1 && !result) {
+	                  result = util.getValue(lines, 'NextHop');
+	                  if (callback) {
+	                    callback(result);
+	                  }
+	                  resolve(result);
+	                  // } else {
+	                  //   exec('ipconfig', util.execOptsWin, function (error, stdout) {
+	                  //     let lines = stdout.toString().split('\r\n');
+	                  //     lines.forEach(function (line) {
+	                  //       line = line.trim().replace(/\. /g, '');
+	                  //       line = line.trim().replace(/ +/g, '');
+	                  //       const parts = line.split(':');
+	                  //       if ((parts[0].toLowerCase().startsWith('standardgate') || parts[0].toLowerCase().indexOf('gateway') > -1 || parts[0].toLowerCase().indexOf('enlace') > -1) && parts[1]) {
+	                  //         result = parts[1];
+	                  //       }
+	                  //     });
+	                  //     if (callback) { callback(result); }
+	                  //     resolve(result);
+	                  //   });
+	                }
+	              });
+	            } else {
+	              if (callback) {
+	                callback(result);
+	              }
+	              resolve(result);
+	            }
+	          });
+	        } catch {
+	          if (callback) {
+	            callback(result);
+	          }
+	          resolve(result);
+	        }
+	      }
+	    });
+	  });
+	}
+
+	network.networkGatewayDefault = networkGatewayDefault;
+	return network;
+}
+
 var hasRequiredOsinfo;
 
 function requireOsinfo () {
@@ -3774,7 +5813,6 @@ function requireOsinfo () {
 	const util = requireUtil$8();
 	const exec = require$$3.exec;
 	const execSync = require$$3.execSync;
-	const execFile = require$$3.execFile;
 
 	const _platform = process.platform;
 
@@ -4531,78 +6569,47 @@ function requireOsinfo () {
 	          });
 	        }
 	        if ({}.hasOwnProperty.call(appsObj.versions, 'postgresql')) {
-	          if (_linux) {
-	            exec('locate bin/postgres', (error, stdout) => {
-	              if (!error) {
-	                const safePath = /^[a-zA-Z0-9/_.-]+$/;
-	                const postgresqlBin = stdout
-	                  .toString()
-	                  .split('\n')
-	                  .filter((p) => safePath.test(p.trim()))
-	                  .sort();
-	                if (postgresqlBin.length) {
-	                  execFile(postgresqlBin[postgresqlBin.length - 1], ['-V'], (error, stdout) => {
-	                    if (!error) {
-	                      const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                      appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
+	          if (_windows) {
+	            util.powerShell('Get-CimInstance Win32_Service | select caption | fl').then((stdout) => {
+	              let serviceSections = stdout.split(/\n\s*\n/);
+	              serviceSections.forEach((item) => {
+	                if (item.trim() !== '') {
+	                  let lines = item.trim().split('\r\n');
+	                  let srvCaption = util.getValue(lines, 'caption', ':', true).toLowerCase();
+	                  if (srvCaption.indexOf('postgresql') > -1) {
+	                    const parts = srvCaption.split(' server ');
+	                    if (parts.length > 1) {
+	                      appsObj.versions.postgresql = parts[1];
 	                    }
-	                    functionProcessed();
-	                  });
-	                } else {
-	                  functionProcessed();
-	                }
-	              } else {
-	                exec('psql -V', (error, stdout) => {
-	                  if (!error) {
-	                    const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                    appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
-	                    appsObj.versions.postgresql = appsObj.versions.postgresql.split('-')[0];
 	                  }
-	                  functionProcessed();
-	                });
-	              }
+	                }
+	              });
+	              functionProcessed();
 	            });
 	          } else {
-	            if (_windows) {
-	              util.powerShell('Get-CimInstance Win32_Service | select caption | fl').then((stdout) => {
-	                let serviceSections = stdout.split(/\n\s*\n/);
-	                serviceSections.forEach((item) => {
-	                  if (item.trim() !== '') {
-	                    let lines = item.trim().split('\r\n');
-	                    let srvCaption = util.getValue(lines, 'caption', ':', true).toLowerCase();
-	                    if (srvCaption.indexOf('postgresql') > -1) {
-	                      const parts = srvCaption.split(' server ');
-	                      if (parts.length > 1) {
-	                        appsObj.versions.postgresql = parts[1];
-	                      }
-	                    }
-	                  }
-	                });
-	                functionProcessed();
-	              });
-	            } else {
-	              exec('postgres -V', (error, stdout) => {
-	                if (!error) {
-	                  const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                  appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
-	                  if (appsObj.versions.postgresql.includes('(') && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes('(')) {
-	                    appsObj.versions.postgresql = postgresql[postgresql.length - 2];
-	                  }
+	            const parsePostgres = (stdout) => {
+	              const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
+	              let version = postgresql.length ? postgresql[postgresql.length - 1] : '';
+	              if (version.includes('(') && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes('(')) {
+	                version = postgresql[postgresql.length - 2];
+	              }
+	              return version.split('-')[0];
+	            };
+	            // no `locate`: its output is any user-writable path and must not be executed
+	            const tryPostgres = (cmds) => {
+	              if (!cmds.length) {
+	                return functionProcessed();
+	              }
+	              exec(cmds[0], (error, stdout) => {
+	                if (!error && stdout.toString().trim()) {
+	                  appsObj.versions.postgresql = parsePostgres(stdout);
 	                  functionProcessed();
 	                } else {
-	                  exec('pg_config --version', (error, stdout) => {
-	                    if (!error) {
-	                      const postgresql = stdout.toString().split('\n')[0].split(' ') || [];
-	                      appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : '';
-	                      if (appsObj.versions.postgresql.includes('(') && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes('(')) {
-	                        appsObj.versions.postgresql = postgresql[postgresql.length - 2];
-	                      }
-	                    }
-	                    functionProcessed();
-	                  });
+	                  tryPostgres(cmds.slice(1));
 	                }
 	              });
-	            }
+	            };
+	            tryPostgres(['postgres -V', 'pg_config --version', 'psql -V']);
 	          }
 	        }
 	        if ({}.hasOwnProperty.call(appsObj.versions, 'perl')) {
@@ -4952,16 +6959,30 @@ function requireOsinfo () {
 
 	osinfo.shell = shell;
 
+	// macOS 26+ and some hardened linux kernels mask MACs in getifaddrs()
+	const MASKED_MACS = ['00:00:00:00:00:00', '02:00:00:00:00:00'];
+
 	function getUniqueMacAdresses() {
 	  let macs = [];
 	  try {
 	    const ifaces = os.networkInterfaces();
+	    let fallbackMacs = null;
 	    for (let dev in ifaces) {
 	      if ({}.hasOwnProperty.call(ifaces, dev)) {
 	        ifaces[dev].forEach((details) => {
-	          if (details && details.mac && details.mac !== '00:00:00:00:00:00') {
-	            const mac = details.mac.toLowerCase();
-	            if (macs.indexOf(mac) === -1) {
+	          if (details && details.mac) {
+	            let mac = details.mac.toLowerCase();
+	            if (MASKED_MACS.indexOf(mac) >= 0) {
+	              if (fallbackMacs === null) {
+	                try {
+	                  fallbackMacs = requireNetwork().getMacAddresses();
+	                } catch {
+	                  fallbackMacs = {};
+	                }
+	              }
+	              mac = (fallbackMacs[dev] || '').toLowerCase();
+	            }
+	            if (mac && MASKED_MACS.indexOf(mac) === -1 && macs.indexOf(mac) === -1) {
 	              macs.push(mac);
 	            }
 	          }
@@ -5145,7 +7166,7 @@ function requireCpu () {
 	  rawCurrentLoadSteal: 0,
 	  rawCurrentLoadGuest: 0
 	};
-	let _cpus = [];
+	const _cpus = [];
 	let _corecount = 0;
 
 	const AMDBaseFrequencies = {
@@ -5930,7 +7951,7 @@ function requireCpu () {
 	  res.brand = res.brand.replace(/CPU+/g, '').replace(/\s+/g, ' ').trim();
 	  res.manufacturer = cpuManufacturer(res.brand);
 
-	  let parts = res.brand.split(' ');
+	  const parts = res.brand.split(' ');
 	  parts.shift();
 	  res.brand = parts.join(' ');
 	  return res;
@@ -5938,9 +7959,9 @@ function requireCpu () {
 
 	function getAMDSpeed(brand) {
 	  let result = '0';
-	  for (let key in AMDBaseFrequencies) {
+	  for (const key in AMDBaseFrequencies) {
 	    if ({}.hasOwnProperty.call(AMDBaseFrequencies, key)) {
-	      let parts = key.split('|');
+	      const parts = key.split('|');
 	      let found = 0;
 	      parts.forEach((item) => {
 	        if (brand.indexOf(item) > -1) {
@@ -6227,8 +8248,8 @@ function requireCpu () {
 	            workload.push(util.powerShell('(Get-CimInstance Win32_ComputerSystem).HypervisorPresent'));
 
 	            Promise.all(workload).then((data) => {
-	              let lines = data[0].split('\r\n');
-	              let name = util.getValue(lines, 'name', ':') || '';
+	              const lines = data[0].split('\r\n');
+	              const name = util.getValue(lines, 'name', ':') || '';
 	              if (name.indexOf('@') >= 0) {
 	                result.brand = name.split('@')[0].trim();
 	                result.speed = name.split('@')[1] ? parseFloat(name.split('@')[1].trim()) : 0;
@@ -6249,7 +8270,7 @@ function requireCpu () {
 	              }
 	              result.speedMin = result.speed;
 
-	              let description = util.getValue(lines, 'description', ':').split(' ');
+	              const description = util.getValue(lines, 'description', ':').split(' ');
 	              for (let i = 0; i < description.length; i++) {
 	                if (description[i].toLowerCase().startsWith('family') && i + 1 < description.length && description[i + 1]) {
 	                  result.family = description[i + 1];
@@ -6329,8 +8350,8 @@ function requireCpu () {
 	  const cores = [];
 	  const speeds = [];
 
-	  if (cpus && cpus.length && Object.prototype.hasOwnProperty.call(cpus[0], 'speed')) {
-	    for (let i in cpus) {
+	  if (cpus && cpus.length && {}.hasOwnProperty.call(cpus[0], 'speed')) {
+	    for (const i in cpus) {
 	      speeds.push(cpus[i].speed > 100 ? (cpus[i].speed + 1) / 1000 : cpus[i].speed / 10);
 	    }
 	  } else if (_linux) {
@@ -6339,7 +8360,7 @@ function requireCpu () {
 	        .toString()
 	        .split('\n')
 	        .filter((line) => line.length > 0);
-	      for (let i in speedStrings) {
+	      for (const i in speedStrings) {
 	        speeds.push(Math.floor(parseInt(speedStrings[i], 10) / 10) / 100);
 	      }
 	    } catch {
@@ -6439,7 +8460,7 @@ function requireCpu () {
 	                result.chipset = Math.round(parseInt(lines2[i], 10) / 100) / 10;
 	              }
 	              // CPU thermal zone (e.g. cpu-thermal on Raspberry Pi)
-	              if (cpuThermal === null && line.indexOf('cpu') !== -1 && lines2[i]) {
+	              if (cpuThermal === null && line.toLowerCase().indexOf('cpu') !== -1 && lines2[i]) {
 	                cpuThermal = Math.round(parseInt(lines2[i], 10) / 100) / 10;
 	              }
 	            }
@@ -6480,7 +8501,7 @@ function requireCpu () {
 	              if (result.main === null) {
 	                result.main = Math.round(result.cores.reduce((a, b) => a + b, 0) / result.cores.length);
 	              }
-	              let maxtmp = Math.max.apply(Math, result.cores);
+	              const maxtmp = Math.max.apply(Math, result.cores);
 	              result.max = maxtmp > result.main ? maxtmp : result.main;
 	            }
 	            if (result.main !== null) {
@@ -6750,13 +8771,13 @@ function requireCpu () {
 	        try {
 	          exec('reg query "HKEY_LOCAL_MACHINE\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0" /v FeatureSet', util.execOptsWin, (error, stdout) => {
 	            if (!error) {
-	              let flag_hex = stdout.split('0x').pop().trim();
-	              let flag_bin_unpadded = parseInt(flag_hex, 16).toString(2);
-	              let flag_bin = '0'.repeat(32 - flag_bin_unpadded.length) + flag_bin_unpadded;
+	              const flag_hex = stdout.split('0x').pop().trim();
+	              const flag_bin_unpadded = parseInt(flag_hex, 16).toString(2);
+	              const flag_bin = '0'.repeat(32 - flag_bin_unpadded.length) + flag_bin_unpadded;
 	              // empty flags are the reserved fields in the CPUID feature bit list
 	              // as found on wikipedia:
 	              // https://en.wikipedia.org/wiki/CPUID
-	              let all_flags = [
+	              const all_flags = [
 	                'fpu',
 	                'vme',
 	                'de',
@@ -6813,7 +8834,7 @@ function requireCpu () {
 	        try {
 	          exec('export LC_ALL=C; lscpu; unset LC_ALL', (error, stdout) => {
 	            if (!error) {
-	              let lines = stdout.toString().split('\n');
+	              const lines = stdout.toString().split('\n');
 	              lines.forEach((line) => {
 	                if (line.split(':')[0].toUpperCase().indexOf('FLAGS') !== -1) {
 	                  result = line.split(':')[1].trim().toLowerCase();
@@ -6823,7 +8844,7 @@ function requireCpu () {
 	            if (!result) {
 	              fs.readFile('/proc/cpuinfo', (error, stdout) => {
 	                if (!error) {
-	                  let lines = stdout.toString().split('\n');
+	                  const lines = stdout.toString().split('\n');
 	                  result = util.getValue(lines, 'features', ':', true).toLowerCase();
 	                }
 	                if (callback) {
@@ -6868,7 +8889,7 @@ function requireCpu () {
 	      if (_darwin) {
 	        exec('sysctl machdep.cpu.features', (error, stdout) => {
 	          if (!error) {
-	            let lines = stdout.toString().split('\n');
+	            const lines = stdout.toString().split('\n');
 	            if (lines.length > 0 && lines[0].indexOf('machdep.cpu.features:') !== -1) {
 	              result = lines[0].split(':')[1].trim().toLowerCase();
 	            }
@@ -6970,9 +8991,9 @@ function requireCpu () {
 	      if (_darwin) {
 	        exec('sysctl hw.l1icachesize hw.l1dcachesize hw.l2cachesize hw.l3cachesize', (error, stdout) => {
 	          if (!error) {
-	            let lines = stdout.toString().split('\n');
+	            const lines = stdout.toString().split('\n');
 	            lines.forEach((line) => {
-	              let parts = line.split(':');
+	              const parts = line.split(':');
 	              if (parts[0].toLowerCase().indexOf('hw.l1icachesize') !== -1) {
 	                result.l1i = parseInt(parts[1].trim()) * (parts[1].indexOf('K') !== -1 ? 1024 : 1);
 	              }
@@ -7033,7 +9054,7 @@ function requireCpu () {
 	  };
 
 	  // Win32_processor
-	  let lines = linesProc.split('\r\n');
+	  const lines = linesProc.split('\r\n');
 	  result.l1d = 0;
 	  result.l1i = 0;
 	  result.l2 = util.getValue(lines, 'l2cachesize', ':');
@@ -7130,7 +9151,7 @@ function requireCpu () {
 	              lines.shift();
 	              if (lines.length === cpus.length) {
 	                for (let i = 0; i < lines.length; i++) {
-	                  let parts = lines[i].split(' ');
+	                  const parts = lines[i].split(' ');
 	                  if (parts.length >= 10) {
 	                    const steal = parseFloat(parts[8]) || 0;
 	                    const guest = parseFloat(parts[9]) || 0;
@@ -7761,11 +9782,9 @@ function requireMemory () {
 	                    bank,
 	                    type: util.getValue(lines, 'Type:'),
 	                    ecc: dataWidth && totalWidth ? totalWidth > dataWidth : false,
-	                    clockSpeed: util.getValue(lines, 'Configured Clock Speed:')
-	                      ? parseInt(util.getValue(lines, 'Configured Clock Speed:'), 10)
-	                      : util.getValue(lines, 'Speed:')
-	                        ? parseInt(util.getValue(lines, 'Speed:'), 10)
-	                        : null,
+	                    // dmidecode >= 3.1 renamed "Configured Clock Speed" to "Configured Memory Speed" - without
+	                    // the new label this silently fell back to Speed, the rated instead of the running speed
+	                    clockSpeed: util.toInt(util.getValue(lines, 'Configured Memory Speed:')) || util.toInt(util.getValue(lines, 'Configured Clock Speed:')) || util.toInt(util.getValue(lines, 'Speed:')) || null,
 	                    formFactor: util.getValue(lines, 'Form Factor:'),
 	                    manufacturer: getManufacturer(util.getValue(lines, 'Manufacturer:')),
 	                    partNum: util.getValue(lines, 'Part Number:'),
@@ -8040,7 +10059,7 @@ function requireBattery () {
 
 	function parseWinBatteryPart(lines, designedCapacity, fullChargeCapacity) {
 	  const result = {};
-	  let status = parseInt(util.getValue(lines, 'BatteryStatus', ':').trim(), 10) || 0;
+	  const status = parseInt(util.getValue(lines, 'BatteryStatus', ':').trim(), 10) || 0;
 	  // let status = util.getValue(lines, 'BatteryStatus', ':').trim();
 	  // 1 = "Discharging"
 	  // 2 = "On A/C"
@@ -8122,7 +10141,7 @@ function requireBattery () {
 	        if (battery_path) {
 	          fs.readFile(battery_path + 'uevent', (error, stdout) => {
 	            if (!error) {
-	              let lines = stdout.toString().split('\n');
+	              const lines = stdout.toString().split('\n');
 
 	              result.isCharging = util.getValue(lines, 'POWER_SUPPLY_STATUS', '=').toLowerCase() === 'charging';
 	              result.acConnected = acConnected || result.isCharging;
@@ -8187,7 +10206,7 @@ function requireBattery () {
 	      }
 	      if (_freebsd || _openbsd || _netbsd) {
 	        exec('sysctl -i hw.acpi.battery hw.acpi.acline', (error, stdout) => {
-	          let lines = stdout.toString().split('\n');
+	          const lines = stdout.toString().split('\n');
 	          const batteries = parseInt('0' + util.getValue(lines, 'hw.acpi.battery.units'), 10);
 	          const percent = parseInt('0' + util.getValue(lines, 'hw.acpi.battery.life'), 10);
 	          result.hasBattery = batteries > 0;
@@ -8207,24 +10226,45 @@ function requireBattery () {
 
 	      if (_darwin) {
 	        exec(
-	          'ioreg -n AppleSmartBattery -r | egrep "CycleCount|IsCharging|DesignCapacity|MaxCapacity|CurrentCapacity|DeviceName|BatterySerialNumber|Serial|TimeRemaining|Voltage"; pmset -g batt | grep %',
+	          'ioreg -n AppleSmartBattery -r | egrep "CycleCount|IsCharging|DesignCapacity|MaxCapacity|CurrentCapacity|DeviceName|BatterySerialNumber|Serial|TimeRemaining|Voltage|BatteryData|NominalChargeCapacity"; pmset -g batt | grep %',
 	          (error, stdout) => {
 	            if (stdout) {
-	              let lines = stdout.toString().replace(/ +/g, '').replace(/"+/g, '').replace(/-/g, '').split('\n');
+	              const lines = stdout
+	                .toString()
+	                .replace(/^[ |]+/gm, '')
+	                .replace(/ +/g, '')
+	                .replace(/"+/g, '')
+	                .replace(/-/g, '')
+	                .split('\n');
+	              const voltage = parseInt('0' + util.getValue(lines, 'voltage', '='), 10) / 1000.0;
+	              const batteryData = util.getValue(lines, 'BatteryData', '=').replace(/^\{/, '').replace(/\}$/, '').split(',');
+	              const maxCapacity = Math.round(
+	                parseInt(
+	                  '0' +
+	                    (util.getValue(lines, 'AppleRawMaxCapacity', '=') ||
+	                      util.getValue(lines, 'NominalChargeCapacity', '=') ||
+	                      util.getValue(batteryData, 'FullChargeCapacity', '=') ||
+	                      util.getValue(batteryData, 'NominalChargeCapacity', '=')),
+	                  10
+	                ) * (voltage || 1)
+	              );
+	              const currentCapacity = Math.round(parseInt('0' + (util.getValue(lines, 'AppleRawCurrentCapacity', '=') || util.getValue(batteryData, 'RemainingCapacity', '=')), 10) * (voltage || 1));
+	              const designedCapacity = Math.round(parseInt('0' + (util.getValue(lines, 'DesignCapacity', '=') || util.getValue(batteryData, 'DesignCapacity', '=')), 10) * (voltage || 1));
+
 	              result.cycleCount = parseInt('0' + util.getValue(lines, 'cyclecount', '='), 10);
-	              result.voltage = parseInt('0' + util.getValue(lines, 'voltage', '='), 10) / 1000.0;
+	              result.voltage = voltage;
 	              result.capacityUnit = result.voltage ? 'mWh' : 'mAh';
-	              result.maxCapacity = Math.round(parseInt('0' + util.getValue(lines, 'applerawmaxcapacity', '='), 10) * (result.voltage || 1));
-	              result.currentCapacity = Math.round(parseInt('0' + util.getValue(lines, 'applerawcurrentcapacity', '='), 10) * (result.voltage || 1));
-	              result.designedCapacity = Math.round(parseInt('0' + util.getValue(lines, 'DesignCapacity', '='), 10) * (result.voltage || 1));
+	              result.maxCapacity = maxCapacity;
+	              result.currentCapacity = currentCapacity;
+	              result.designedCapacity = designedCapacity;
 	              result.manufacturer = 'Apple';
 	              result.serial = util.getValue(lines, 'BatterySerialNumber', '=') || util.getValue(lines, 'Serial', '=');
 	              result.model = util.getValue(lines, 'DeviceName', '=');
 	              let percent = null;
 	              const line = util.getValue(lines, 'internal', 'Battery');
-	              let parts = line.split(';');
+	              const parts = line.split(';');
 	              if (parts && parts[0]) {
-	                let parts2 = parts[0].split('\t');
+	                const parts2 = parts[0].split('\t');
 	                if (parts2 && parts2[1]) {
 	                  percent = parseFloat(parts2[1].trim().replace(/%/g, ''));
 	                }
@@ -8371,6 +10411,7 @@ function requireGraphics () {
 	const path$1 = path;
 	const exec = require$$3.exec;
 	const execSync = require$$3.execSync;
+	const execFileSync = require$$3.execFileSync;
 	const util = requireUtil$8();
 
 	const _platform = process.platform;
@@ -8581,7 +10622,7 @@ function requireGraphics () {
 	    // PCI bus IDs
 	    let pciIDs = [];
 	    try {
-	      pciIDs = execSync('export LC_ALL=C; dmidecode -t 9 2>/dev/null; unset LC_ALL | grep "Bus Address: "', util.execOptsLinux).toString().split('\n');
+	      pciIDs = execSync('export LC_ALL=C; dmidecode -t 9 2>/dev/null | grep "Bus Address: "', util.execOptsLinux).toString().split('\n');
 	      for (let i = 0; i < pciIDs.length; i++) {
 	        pciIDs[i] = pciIDs[i].replace('Bus Address:', '').replace('0000:', '').trim();
 	      }
@@ -8835,14 +10876,9 @@ function requireGraphics () {
 	    if (nvidiaSmiExe) {
 	      const nvidiaSmiOpts =
 	        '--query-gpu=driver_version,pci.sub_device_id,name,pci.bus_id,fan.speed,memory.total,memory.used,memory.free,utilization.gpu,utilization.memory,temperature.gpu,temperature.memory,power.draw,power.limit,clocks.gr,clocks.mem --format=csv,noheader,nounits';
-	      const cmd = `"${nvidiaSmiExe}" ${nvidiaSmiOpts}`;
-	      if (_linux) {
-	        options.stdio = ['pipe', 'pipe', 'ignore'];
-	      }
+	      options.stdio = ['pipe', 'pipe', 'ignore'];
 	      try {
-	        const sanitized = cmd + (_linux ? '  2>/dev/null' : '') + (_windows ? '  2> nul' : '');
-	        const res = execSync(sanitized, options).toString();
-	        return res;
+	        return execFileSync(nvidiaSmiExe, nvidiaSmiOpts.split(' '), options).toString();
 	      } catch {
 	        util.noop();
 	      }
@@ -9727,7 +11763,19 @@ function requireFilesystem () {
 	  }
 
 	  let macOsDisks = [];
+	  const macOsFsTypes = new Map();
 	  let osMounts = [];
+
+	  // macOS df has no type column, so the type used to be guessed from diskutil - which only ever
+	  // produced APFS, HFS or NFS and therefore never recognised zfs, exfat, msdos or smbfs. mount
+	  // knows the real type, so prefer it and keep the old names for the three it could produce.
+	  function macOsFsType(fs) {
+	    const type = macOsFsTypes.get(fs);
+	    if (!type) {
+	      return getmacOsFsType(fs);
+	    }
+	    return type === 'apfs' ? 'APFS' : type === 'hfs' ? 'HFS' : type === 'nfs' ? 'NFS' : type;
+	  }
 
 	  function getmacOsFsType(fs) {
 	    if (!fs.startsWith('/')) {
@@ -9770,6 +11818,59 @@ function requireFilesystem () {
 	    return lines;
 	  }
 
+	  // ZFS datasets share the pool, so df only reports what a dataset references itself - a parent
+	  // holding its data in child datasets looks empty (#1017). Only `zfs list` knows the
+	  // hierarchical usage, so query it once when a zfs mount is present.
+	  function applyZfsUsage(data, cb) {
+	    if (!data.some((item) => item.type === 'zfs')) {
+	      return cb(data);
+	    }
+	    exec('zfs list -H -p -o name,used,avail,mountpoint', { ...util.execOptsLinux, timeout: 5000 }, (error, stdout) => {
+	      if (error) {
+	        // a truncated or timed out listing would correct only part of the datasets and leave the
+	        // rest on their df values - correct none instead, so the result stays consistent
+	        return cb(data);
+	      }
+	      const byMount = Object.create(null);
+	      const byName = Object.create(null);
+	      (stdout || '')
+	        .toString()
+	        .split('\n')
+	        .forEach((line) => {
+	          const parts = line.split('\t');
+	          if (parts.length < 4) {
+	            return;
+	          }
+	          const entry = { used: parseInt(parts[1], 10), available: parseInt(parts[2], 10) };
+	          if (isNaN(entry.used) || isNaN(entry.available)) {
+	            return;
+	          }
+	          byName[parts[0]] = entry;
+	          const mount = parts[3].trim();
+	          // several datasets can carry the same mountpoint (root-on-zfs boot environments all
+	          // declare "/"), so the mount index is only a fallback - keep the first one
+	          if (mount.startsWith('/') && !byMount[mount]) {
+	            byMount[mount] = entry;
+	          }
+	        });
+	      data.forEach((item) => {
+	        if (item.type !== 'zfs') {
+	          return;
+	        }
+	        // the fs column is the exact dataset name and therefore unambiguous, unlike the mountpoint
+	        const dataset = byName[item.fs] || byMount[item.mount];
+	        if (!dataset || !(dataset.used + dataset.available)) {
+	          return;
+	        }
+	        item.used = dataset.used;
+	        item.available = dataset.available;
+	        item.size = dataset.used + dataset.available;
+	        item.use = parseFloat(((100.0 * dataset.used) / item.size).toFixed(2));
+	      });
+	      cb(data);
+	    });
+	  }
+
 	  function parseDf(lines) {
 	    const data = [];
 	    // filesystem (first column) and mount point (last column) may contain spaces:
@@ -9782,7 +11883,7 @@ function requireFilesystem () {
 	        const parts = line.trim().match(hasType ? dfWithType : dfNoType);
 	        if (parts && (parts[1].startsWith('/') || parts[hasType ? 6 : 5] === '/' || parts[1].indexOf('/') > 0 || parts[1].indexOf(':') === 1 || (!_darwin && !isLinuxTmpFs(parts[2])))) {
 	          const fs = parts[1];
-	          const fsType = hasType ? parts[2] : getmacOsFsType(parts[1]);
+	          const fsType = hasType ? parts[2] : macOsFsType(parts[1]);
 	          const size = parseInt(parts[hasType ? 3 : 2], 10) * 1024;
 	          const used = parseInt(parts[hasType ? 4 : 3], 10) * 1024;
 	          const available = parseInt(parts[hasType ? 5 : 4], 10) * 1024;
@@ -9826,11 +11927,16 @@ function requireFilesystem () {
 	            execSync('mount')
 	              .toString()
 	              .split('\n')
-	              .filter((line) => {
-	                return line.startsWith('/');
-	              })
 	              .forEach((line) => {
-	                osMounts[line.split(' ')[0]] = line.toLowerCase().indexOf('read-only') === -1;
+	                // mount output: "<fs> on <mountpoint> (<type>, <options>)"
+	                const fs = line.split(' ')[0];
+	                const type = line.match(/\(([^),]+)[^)]*\)$/);
+	                if (fs && type) {
+	                  macOsFsTypes.set(fs, type[1].trim().toLowerCase());
+	                }
+	                if (line.startsWith('/')) {
+	                  osMounts[fs] = line.toLowerCase().indexOf('read-only') === -1;
+	                }
 	              });
 	          } catch {
 	            util.noop();
@@ -9879,19 +11985,23 @@ function requireFilesystem () {
 	            });
 	          }
 	          if ((!error || data.length) && stdout.toString().trim() !== '') {
-	            if (callback) {
-	              callback(data);
-	            }
-	            resolve(data);
+	            applyZfsUsage(data, (data) => {
+	              if (callback) {
+	                callback(data);
+	              }
+	              resolve(data);
+	            });
 	          } else {
 	            exec('df -kPT 2>/dev/null', { maxBuffer: 1024 * 1024 }, (error, stdout) => {
 	              // fixed issue alpine fallback
 	              const lines = filterLines(stdout);
 	              data = parseDf(lines);
-	              if (callback) {
-	                callback(data);
-	              }
-	              resolve(data);
+	              applyZfsUsage(data, (data) => {
+	                if (callback) {
+	                  callback(data);
+	                }
+	                resolve(data);
+	              });
 	            });
 	          }
 	        });
@@ -9904,8 +12014,9 @@ function requireFilesystem () {
 	      }
 	      if (_windows) {
 	        try {
-	          const driveSanitized = drive ? util.sanitizeString(drive, true) : '';
-	          const cmd = `Get-WmiObject Win32_logicaldisk | select Access,Caption,FileSystem,FreeSpace,Size ${driveSanitized ? '| where -property Caption -eq ' + driveSanitized : ''} | fl`;
+	          // invalid drive input yields '' -> filter matches no drive instead of listing all
+	          const driveSanitized = util.sanitizeDriveLetter(drive);
+	          const cmd = `Get-WmiObject Win32_logicaldisk | select Access,Caption,FileSystem,FreeSpace,Size ${drive ? "| where -property Caption -eq '" + driveSanitized + "'" : ''} | fl`;
 	          util.powerShell(cmd).then((stdout, error) => {
 	            if (!error) {
 	              const devices = stdout.toString().split(/\n\s*\n/);
@@ -10176,7 +12287,9 @@ function requireFilesystem () {
 	  try {
 	    data.forEach((element) => {
 	      if (element.type.startsWith('raid')) {
-	        const lines = execSync(`mdadm --export --detail /dev/${util.sanitizeString(element.name, true)}`, util.execOptsLinux).toString().split('\n');
+	        const lines = execSync(`mdadm --export --detail /dev/${util.sanitizeString(element.name, true)}`, util.execOptsLinux)
+	          .toString()
+	          .split('\n');
 	        const mdData = decodeMdabmData(lines);
 
 	        element.label = mdData.label; // <- assign label info
@@ -11043,7 +13156,7 @@ function requireFilesystem () {
 	      }
 	      if (_darwin) {
 	        let cmdFullSmart = '';
-	        exec(`system_profiler SPSerialATADataType SPNVMeDataType SPUSBDataType SPStorageDataType`, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+	        exec(`system_profiler SPSerialATADataType SPNVMeDataType SPUSBDataType SPUSBHostDataType SPStorageDataType`, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
 	          if (!error) {
 	            // split by type:
 	            const lines = stdout.toString().split('\n');
@@ -11182,9 +13295,12 @@ function requireFilesystem () {
 	            } catch {
 	              util.noop();
 	            }
-	            // USB Drives (older macOS report storage devices under SPUSBDataType)
+	            // USB Drives (SPUSBDataType up to macOS 26, SPUSBHostDataType from macOS 27 on)
 	            try {
-	              const devices = linesUSB.join('\n').replace(/Media:\n /g, 'Model:').split('\n\n          Product ID:');
+	              const devices = linesUSB
+	                .join('\n')
+	                .replace(/Media:\n /g, 'Model:')
+	                .split('\n\n          Product ID:');
 	              devices.shift();
 	              devices.forEach((device) => {
 	                const lines = device.split('\n');
@@ -11406,6 +13522,10 @@ function requireFilesystem () {
 	              const smartDev = JSON.parse(execSync('smartctl --scan -j').toString());
 	              if (smartDev && smartDev.devices && smartDev.devices.length > 0) {
 	                smartDev.devices.forEach((dev) => {
+	                  // device names come from smartctl output - never let anything but a plain path reach the shell
+	                  if (!/^[\w/.,:\\-]+$/.test(String(dev.name || ''))) {
+	                    return;
+	                  }
 	                  workload.push(execPromiseSave(`smartctl -j -a ${dev.name}`, util.execOptsWin));
 	                });
 	              }
@@ -11431,7 +13551,7 @@ function requireFilesystem () {
 	                  // in first case it will be "<serial number>&0"
 	                  // in second case it will be opaque generated value that looks like this: "5&<8-symbol hex code>&0&000000"
 	                  // https://learn.microsoft.com/en-us/windows-hardware/drivers/install/instance-ids
-	                  if (parts.length == 2 && parts[1] === '0') {
+	                  if (parts.length === 2 && parts[1] === '0') {
 	                    serialNum = parts[0];
 	                  }
 	                }
@@ -11532,2023 +13652,6 @@ function requireFilesystem () {
 
 	filesystem.diskLayout = diskLayout;
 	return filesystem;
-}
-
-var network = {};
-
-var hasRequiredNetwork;
-
-function requireNetwork () {
-	if (hasRequiredNetwork) return network;
-	hasRequiredNetwork = 1;
-	// @ts-check
-	// ==================================================================================
-	// network.js
-	// ----------------------------------------------------------------------------------
-	// Description:   System Information - library
-	//                for Node.js
-	// Copyright:     (c) 2014 - 2026
-	// Author:        Sebastian Hildebrandt
-	// ----------------------------------------------------------------------------------
-	// License:       MIT
-	// ==================================================================================
-	// 9. Network
-	// ----------------------------------------------------------------------------------
-
-	const os = os__default;
-	const exec = require$$3.exec;
-	const execSync = require$$3.execSync;
-	const execFileSync = require$$3.execFileSync;
-	const readFileSync = require$$1__default.readFileSync;
-
-	const fs = require$$1__default;
-	const util = requireUtil$8();
-
-	const _platform = process.platform;
-
-	const _linux = _platform === 'linux' || _platform === 'android';
-	const _darwin = _platform === 'darwin';
-	const _windows = _platform === 'win32';
-	const _freebsd = _platform === 'freebsd';
-	const _openbsd = _platform === 'openbsd';
-	const _netbsd = _platform === 'netbsd';
-	const _sunos = _platform === 'sunos';
-
-	const _network = {};
-	let _default_iface = '';
-	let _ifaces = {};
-	let _dhcpNics = [];
-	let _networkInterfaces = [];
-	let _mac = {};
-	let pathToIp;
-
-	function getDefaultNetworkInterface() {
-	  let ifacename = '';
-	  let ifacenameFirst = '';
-	  try {
-	    const ifaces = os.networkInterfaces();
-
-	    let scopeid = 9999;
-
-	    // fallback - "first" external interface (sorted by scopeid)
-	    for (let dev in ifaces) {
-	      if ({}.hasOwnProperty.call(ifaces, dev)) {
-	        ifaces[dev].forEach((details) => {
-	          if (details && details.internal === false) {
-	            ifacenameFirst = ifacenameFirst || dev; // fallback if no scopeid
-	            if (details.scopeid && details.scopeid < scopeid) {
-	              ifacename = dev;
-	              scopeid = details.scopeid;
-	            }
-	          }
-	        });
-	      }
-	    }
-	    ifacename = ifacename || ifacenameFirst || '';
-
-	    if (_windows) {
-	      // https://www.inetdaemon.com/tutorials/internet/ip/routing/default_route.shtml
-	      let defaultIp = '';
-	      const cmd = 'netstat -r';
-	      const result = execSync(cmd, util.execOptsWin);
-	      const lines = result.toString().split(os.EOL);
-	      lines.forEach((line) => {
-	        line = line.replace(/\s+/g, ' ').trim();
-	        if (line.indexOf('0.0.0.0 0.0.0.0') > -1 && !/[a-zA-Z]/.test(line)) {
-	          const parts = line.split(' ');
-	          if (parts.length >= 5) {
-	            defaultIp = parts[parts.length - 2];
-	          }
-	        }
-	      });
-	      if (defaultIp) {
-	        for (let dev in ifaces) {
-	          if ({}.hasOwnProperty.call(ifaces, dev)) {
-	            ifaces[dev].forEach((details) => {
-	              if (details && details.address && details.address === defaultIp) {
-	                ifacename = dev;
-	              }
-	            });
-	          }
-	        }
-	      }
-	    }
-	    if (_linux) {
-	      const cmd = 'ip route 2> /dev/null | grep default';
-	      const result = execSync(cmd, util.execOptsLinux);
-	      const parts = result.toString().split('\n')[0].split(/\s+/);
-	      if (parts[0] === 'none' && parts[5]) {
-	        ifacename = parts[5];
-	      } else if (parts[4]) {
-	        ifacename = parts[4];
-	      }
-
-	      if (ifacename.indexOf(':') > -1) {
-	        ifacename = ifacename.split(':')[1].trim();
-	      }
-	    }
-	    if (_darwin || _freebsd || _openbsd || _netbsd || _sunos) {
-	      let cmd = '';
-	      if (_linux) {
-	        cmd = "ip route 2> /dev/null | grep default | awk '{print $5}'";
-	      }
-	      if (_darwin) {
-	        cmd = "route -n get default 2>/dev/null | grep interface: | awk '{print $2}'";
-	      }
-	      if (_freebsd || _openbsd || _netbsd || _sunos) {
-	        cmd = 'route get 0.0.0.0 | grep interface:';
-	      }
-	      const result = execSync(cmd);
-	      ifacename = result.toString().split('\n')[0];
-	      if (ifacename.indexOf(':') > -1) {
-	        ifacename = ifacename.split(':')[1].trim();
-	      }
-	    }
-	  } catch {
-	    util.noop();
-	  }
-	  if (ifacename) {
-	    _default_iface = ifacename;
-	  }
-	  return _default_iface;
-	}
-
-	network.getDefaultNetworkInterface = getDefaultNetworkInterface;
-
-	function getMacAddresses() {
-	  let iface = '';
-	  let mac = '';
-	  const result = {};
-	  if (_linux || _freebsd || _openbsd || _netbsd) {
-	    if (typeof pathToIp === 'undefined') {
-	      try {
-	        const lines = execSync('which ip', util.execOptsLinux).toString().split('\n');
-	        if (lines.length && lines[0].indexOf(':') === -1 && lines[0].indexOf('/') === 0) {
-	          pathToIp = lines[0];
-	        } else {
-	          pathToIp = '';
-	        }
-	      } catch {
-	        pathToIp = '';
-	      }
-	    }
-	    try {
-	      const cmd = 'export LC_ALL=C; ' + (pathToIp ? pathToIp + ' link show up' : '/sbin/ifconfig') + '; unset LC_ALL';
-	      const res = execSync(cmd, util.execOptsLinux);
-	      const lines = res.toString().split('\n');
-	      for (let i = 0; i < lines.length; i++) {
-	        if (lines[i] && lines[i][0] !== ' ') {
-	          if (pathToIp) {
-	            const nextline = lines[i + 1].trim().split(' ');
-	            if (nextline[0] === 'link/ether') {
-	              iface = lines[i].split(' ')[1];
-	              iface = iface.slice(0, iface.length - 1);
-	              mac = nextline[1];
-	            }
-	          } else {
-	            iface = lines[i].split(' ')[0];
-	            mac = lines[i].split('HWaddr ')[1];
-	          }
-
-	          if (iface && mac) {
-	            result[iface] = mac.trim();
-	            iface = '';
-	            mac = '';
-	          }
-	        }
-	      }
-	    } catch {
-	      util.noop();
-	    }
-	  }
-	  if (_darwin) {
-	    try {
-	      const cmd = '/sbin/ifconfig';
-	      const res = execSync(cmd);
-	      const lines = res.toString().split('\n');
-	      for (let i = 0; i < lines.length; i++) {
-	        if (lines[i] && lines[i][0] !== '\t' && lines[i].indexOf(':') > 0) {
-	          iface = lines[i].split(':')[0];
-	        } else if (lines[i].indexOf('\tether ') === 0) {
-	          mac = lines[i].split('\tether ')[1];
-	          if (iface && mac) {
-	            result[iface] = mac.trim();
-	            iface = '';
-	            mac = '';
-	          }
-	        }
-	      }
-	    } catch {
-	      util.noop();
-	    }
-	  }
-	  return result;
-	}
-
-	function networkInterfaceDefault(callback) {
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      const result = getDefaultNetworkInterface();
-	      if (callback) {
-	        callback(result);
-	      }
-	      resolve(result);
-	    });
-	  });
-	}
-
-	network.networkInterfaceDefault = networkInterfaceDefault;
-
-	// --------------------------
-	// NET - interfaces
-
-	function parseLinesWindowsNics(sections, nconfigsections) {
-	  const nics = [];
-	  for (let i in sections) {
-	    try {
-	      if ({}.hasOwnProperty.call(sections, i)) {
-	        if (sections[i].trim() !== '') {
-	          const lines = sections[i].trim().split('\r\n');
-	          let linesNicConfig = null;
-	          try {
-	            linesNicConfig = nconfigsections && nconfigsections[i] ? nconfigsections[i].trim().split('\r\n') : [];
-	          } catch {
-	            util.noop();
-	          }
-	          const netEnabled = util.getValue(lines, 'NetEnabled', ':');
-	          let adapterType = util.getValue(lines, 'AdapterTypeID', ':') === '9' ? 'wireless' : 'wired';
-	          const ifacename = util.getValue(lines, 'Name', ':').replace(/\]/g, ')').replace(/\[/g, '(');
-	          const iface = util.getValue(lines, 'NetConnectionID', ':').replace(/\]/g, ')').replace(/\[/g, '(');
-	          if (ifacename.toLowerCase().indexOf('wi-fi') >= 0 || ifacename.toLowerCase().indexOf('wireless') >= 0) {
-	            adapterType = 'wireless';
-	          }
-	          if (netEnabled !== '') {
-	            const speed = parseInt(util.getValue(lines, 'speed', ':').trim(), 10) / 1000000;
-	            nics.push({
-	              mac: util.getValue(lines, 'MACAddress', ':').toLowerCase(),
-	              dhcp: util.getValue(linesNicConfig, 'dhcpEnabled', ':').toLowerCase() === 'true',
-	              name: ifacename,
-	              iface,
-	              netEnabled: netEnabled === 'TRUE',
-	              speed: isNaN(speed) ? null : speed,
-	              operstate: util.getValue(lines, 'NetConnectionStatus', ':') === '2' ? 'up' : 'down',
-	              type: adapterType
-	            });
-	          }
-	        }
-	      }
-	    } catch {
-	      util.noop();
-	    }
-	  }
-	  return nics;
-	}
-
-	function getWindowsNics() {
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      let cmd = 'Get-CimInstance Win32_NetworkAdapter | fl *' + "; echo '#-#-#-#';";
-	      cmd += 'Get-CimInstance Win32_NetworkAdapterConfiguration | fl DHCPEnabled' + '';
-	      try {
-	        util.powerShell(cmd).then((data) => {
-	          data = data.split('#-#-#-#');
-	          const nsections = (data[0] || '').split(/\n\s*\n/);
-	          const nconfigsections = (data[1] || '').split(/\n\s*\n/);
-	          resolve(parseLinesWindowsNics(nsections, nconfigsections));
-	        });
-	      } catch {
-	        resolve([]);
-	      }
-	    });
-	  });
-	}
-
-	function getWindowsDNSsuffixes() {
-	  let iface = {};
-
-	  const dnsSuffixes = {
-	    primaryDNS: '',
-	    exitCode: 0,
-	    ifaces: []
-	  };
-
-	  try {
-	    const ipconfig = execSync('ipconfig /all', util.execOptsWin);
-	    const ipconfigArray = ipconfig.split('\r\n\r\n');
-
-	    ipconfigArray.forEach((element, index) => {
-	      if (index === 1) {
-	        const longPrimaryDNS = element.split('\r\n').filter((element) => {
-	          return element.toUpperCase().includes('DNS');
-	        });
-	        const primaryDNS = longPrimaryDNS[0].substring(longPrimaryDNS[0].lastIndexOf(':') + 1);
-	        dnsSuffixes.primaryDNS = primaryDNS.trim();
-	        if (!dnsSuffixes.primaryDNS) {
-	          dnsSuffixes.primaryDNS = 'Not defined';
-	        }
-	      }
-	      if (index > 1) {
-	        if (index % 2 === 0) {
-	          const name = element.substring(element.lastIndexOf(' ') + 1).replace(':', '');
-	          iface.name = name;
-	        } else {
-	          const connectionSpecificDNS = element.split('\r\n').filter((element) => {
-	            return element.toUpperCase().includes('DNS');
-	          });
-	          const dnsSuffix = connectionSpecificDNS[0].substring(connectionSpecificDNS[0].lastIndexOf(':') + 1);
-	          iface.dnsSuffix = dnsSuffix.trim();
-	          dnsSuffixes.ifaces.push(iface);
-	          iface = {};
-	        }
-	      }
-	    });
-
-	    return dnsSuffixes;
-	  } catch {
-	    return {
-	      primaryDNS: '',
-	      exitCode: 0,
-	      ifaces: []
-	    };
-	  }
-	}
-
-	function getWindowsIfaceDNSsuffix(ifaces, ifacename) {
-	  let dnsSuffix = '';
-	  // Adding (.) to ensure ifacename compatibility when duplicated iface-names
-	  const interfaceName = ifacename + '.';
-	  try {
-	    const connectionDnsSuffix = ifaces
-	      .filter((iface) => {
-	        return interfaceName.includes(iface.name + '.');
-	      })
-	      .map((iface) => iface.dnsSuffix);
-	    if (connectionDnsSuffix[0]) {
-	      dnsSuffix = connectionDnsSuffix[0];
-	    }
-	    if (!dnsSuffix) {
-	      dnsSuffix = '';
-	    }
-	    return dnsSuffix;
-	  } catch {
-	    return 'Unknown';
-	  }
-	}
-
-	function getWindowsWiredProfilesInformation() {
-	  try {
-	    const result = execSync('netsh lan show profiles', util.execOptsWin);
-	    const profileList = result.split('\r\nProfile on interface');
-	    return profileList;
-	  } catch (error) {
-	    if (error.status === 1 && error.stdout.includes('AutoConfig')) {
-	      return 'Disabled';
-	    }
-	    return [];
-	  }
-	}
-
-	function getWindowsWirelessIfaceSSID(interfaceName) {
-	  try {
-	    const result = execSync(`netsh wlan show  interface name="${interfaceName}" | findstr "SSID"`, util.execOptsWin);
-	    const SSID = result.split('\r\n').shift();
-	    const parseSSID = SSID.split(':').pop().trim();
-	    return parseSSID;
-	  } catch {
-	    return 'Unknown';
-	  }
-	}
-	function getWindowsIEEE8021x(connectionType, iface, ifaces) {
-	  const i8021x = {
-	    state: 'Unknown',
-	    protocol: 'Unknown'
-	  };
-
-	  if (ifaces === 'Disabled') {
-	    i8021x.state = 'Disabled';
-	    i8021x.protocol = 'Not defined';
-	    return i8021x;
-	  }
-
-	  if (connectionType === 'wired' && ifaces.length > 0) {
-	    try {
-	      // Get 802.1x information by interface name
-	      const iface8021xInfo = ifaces.find((element) => {
-	        return element.includes(iface + '\r\n');
-	      });
-	      const arrayIface8021xInfo = iface8021xInfo.split('\r\n');
-	      const state8021x = arrayIface8021xInfo.find((element) => {
-	        return element.includes('802.1x');
-	      });
-
-	      if (state8021x.includes('Disabled')) {
-	        i8021x.state = 'Disabled';
-	        i8021x.protocol = 'Not defined';
-	      } else if (state8021x.includes('Enabled')) {
-	        const protocol8021x = arrayIface8021xInfo.find((element) => {
-	          return element.includes('EAP');
-	        });
-	        i8021x.protocol = protocol8021x.split(':').pop();
-	        i8021x.state = 'Enabled';
-	      }
-	    } catch {
-	      return i8021x;
-	    }
-	  } else if (connectionType === 'wireless') {
-	    let i8021xState = '';
-	    let i8021xProtocol = '';
-
-	    try {
-	      const SSID = getWindowsWirelessIfaceSSID(iface);
-	      if (SSID !== 'Unknown') {
-	        const ifaceSanitized = util.sanitizeString(SSID);
-	        const profiles = execSync(`netsh wlan show profiles "${ifaceSanitized}"`, util.execOptsWin).split('\r\n');
-	        i8021xState = (profiles.find((l) => l.indexOf('802.1X') >= 0) || '').trim();
-	        i8021xProtocol = (profiles.find((l) => l.indexOf('EAP') >= 0) || '').trim();
-	      }
-
-	      if (i8021xState.includes(':') && i8021xProtocol.includes(':')) {
-	        i8021x.state = i8021xState.split(':').pop();
-	        i8021x.protocol = i8021xProtocol.split(':').pop();
-	      }
-	    } catch (error) {
-	      if (error.status === 1 && error.stdout.includes('AutoConfig')) {
-	        i8021x.state = 'Disabled';
-	        i8021x.protocol = 'Not defined';
-	      }
-	      return i8021x;
-	    }
-	  }
-
-	  return i8021x;
-	}
-
-	function splitSectionsNics(lines) {
-	  const result = [];
-	  let section = [];
-	  lines.forEach((line) => {
-	    if (!line.startsWith('\t') && !line.startsWith(' ')) {
-	      if (section.length) {
-	        result.push(section);
-	        section = [];
-	      }
-	    }
-	    section.push(line);
-	  });
-	  if (section.length) {
-	    result.push(section);
-	  }
-	  return result;
-	}
-
-	function parseLinesDarwinNics(sections) {
-	  const nics = [];
-	  sections.forEach((section) => {
-	    const nic = {
-	      iface: '',
-	      mtu: null,
-	      mac: '',
-	      ip6: '',
-	      ip4: '',
-	      speed: null,
-	      type: '',
-	      operstate: '',
-	      duplex: '',
-	      internal: false
-	    };
-	    const first = section[0];
-	    nic.iface = first.split(':')[0].trim();
-	    const parts = first.split('> mtu');
-	    nic.mtu = parts.length > 1 ? parseInt(parts[1], 10) : null;
-	    if (isNaN(nic.mtu)) {
-	      nic.mtu = null;
-	    }
-	    nic.internal = parts[0].toLowerCase().indexOf('loopback') > -1;
-	    section.forEach((line) => {
-	      if (line.trim().startsWith('ether ')) {
-	        nic.mac = line.split('ether ')[1].toLowerCase().trim();
-	      }
-	      if (line.trim().startsWith('inet6 ') && !nic.ip6) {
-	        nic.ip6 = line.split('inet6 ')[1].toLowerCase().split('%')[0].split(' ')[0];
-	      }
-	      if (line.trim().startsWith('inet ') && !nic.ip4) {
-	        nic.ip4 = line.split('inet ')[1].toLowerCase().split(' ')[0];
-	      }
-	    });
-	    let speed = util.getValue(section, 'link rate');
-	    nic.speed = speed ? parseFloat(speed) : null;
-	    if (nic.speed === null) {
-	      speed = util.getValue(section, 'uplink rate');
-	      nic.speed = speed ? parseFloat(speed) : null;
-	      if (nic.speed !== null && speed.toLowerCase().indexOf('gbps') >= 0) {
-	        nic.speed = nic.speed * 1000;
-	      }
-	    } else {
-	      if (speed.toLowerCase().indexOf('gbps') >= 0) {
-	        nic.speed = nic.speed * 1000;
-	      }
-	    }
-	    nic.type = util.getValue(section, 'type').toLowerCase().indexOf('wi-fi') > -1 ? 'wireless' : 'wired';
-	    const operstate = util.getValue(section, 'status').toLowerCase();
-	    nic.operstate = operstate === 'active' ? 'up' : operstate === 'inactive' ? 'down' : 'unknown';
-	    nic.duplex = util.getValue(section, 'media').toLowerCase().indexOf('half-duplex') > -1 ? 'half' : 'full';
-	    if (nic.ip6 || nic.ip4 || nic.mac) {
-	      nics.push(nic);
-	    }
-	  });
-	  return nics;
-	}
-
-	function getDarwinNics() {
-	  const cmd = '/sbin/ifconfig -v';
-	  try {
-	    const lines = execSync(cmd, { maxBuffer: 1024 * 102400 })
-	      .toString()
-	      .split('\n');
-	    const nsections = splitSectionsNics(lines);
-	    return parseLinesDarwinNics(nsections);
-	  } catch {
-	    return [];
-	  }
-	}
-
-	function getLinuxIfaceConnectionName(interfaceName) {
-	  try {
-	    const output = execFileSync('nmcli', ['device', 'status'], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-	    const result = util.grep(output, interfaceName);
-
-	    const resultFormat = result.replace(/\s+/g, ' ').trim();
-	    const connectionNameLines = resultFormat.split(' ').slice(3);
-	    const connectionName = connectionNameLines.join(' ');
-	    const connectionNameSanitized = util.sanitizeString(connectionName, false);
-
-	    return connectionNameSanitized !== '--' ? connectionNameSanitized : '';
-	  } catch {
-	    return '';
-	  }
-	}
-
-	function checkLinuxDCHPInterfaces(file, depth) {
-	  let result = [];
-	  depth = depth || 0;
-	  if (depth > 10) {
-	    return result;
-	  }
-	  try {
-	    const content = readFileSync(file, { encoding: 'utf8' });
-	    const lines = content.split('\n').filter((l) => /iface|source/.test(l));
-
-	    lines.forEach((line) => {
-	      const parts = line.replace(/\s+/g, ' ').trim().split(' ');
-	      if (parts.length >= 4) {
-	        if (line.toLowerCase().indexOf(' inet ') >= 0 && line.toLowerCase().indexOf('dhcp') >= 0) {
-	          result.push(parts[1]);
-	        }
-	      }
-	      if (line.toLowerCase().includes('source')) {
-	        const file = line.split(' ')[1];
-	        result = result.concat(checkLinuxDCHPInterfaces(file, depth + 1));
-	      }
-	    });
-	  } catch {
-	    util.noop();
-	  }
-	  return result;
-	}
-
-	function getLinuxDHCPNics() {
-	  // alternate methods getting interfaces using DHCP
-	  const cmd = 'ip a 2> /dev/null';
-	  let result = [];
-	  try {
-	    const lines = execSync(cmd, util.execOptsLinux).toString().split('\n');
-	    const nsections = splitSectionsNics(lines);
-	    result = parseLinuxDHCPNics(nsections);
-	  } catch {
-	    util.noop();
-	  }
-	  try {
-	    result = checkLinuxDCHPInterfaces('/etc/network/interfaces');
-	  } catch {
-	    util.noop();
-	  }
-	  return result;
-	}
-
-	function parseLinuxDHCPNics(sections) {
-	  const result = [];
-	  if (sections && sections.length) {
-	    sections.forEach((lines) => {
-	      if (lines && lines.length) {
-	        const parts = lines[0].split(':');
-	        if (parts.length > 2) {
-	          for (let line of lines) {
-	            if (line.indexOf(' inet ') >= 0 && line.indexOf(' dynamic ') >= 0) {
-	              const parts2 = line.split(' ');
-	              const nic = parts2[parts2.length - 1].trim();
-	              result.push(nic);
-	              break;
-	            }
-	          }
-	        }
-	      }
-	    });
-	  }
-	  return result;
-	}
-
-	function getLinuxIfaceDHCPstatus(iface, connectionName, DHCPNics) {
-	  let result = false;
-	  if (connectionName) {
-	    try {
-	      const output = execFileSync('nmcli', ['connection', 'show', connectionName], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-	      const lines = util.grep(output, 'ipv4.method');
-	      const resultFormat = lines.replace(/\s+/g, ' ').trim();
-
-	      const dhcStatus = resultFormat.split(' ').slice(1).toString();
-	      switch (dhcStatus) {
-	        case 'auto':
-	          result = true;
-	          break;
-
-	        default:
-	          result = false;
-	          break;
-	      }
-	      return result;
-	    } catch {
-	      return DHCPNics.indexOf(iface) >= 0;
-	    }
-	  } else {
-	    return DHCPNics.indexOf(iface) >= 0;
-	  }
-	}
-
-	function getDarwinIfaceDHCPstatus(iface) {
-	  let result = false;
-
-	  try {
-	    const output = execFileSync('ipconfig', ['getpacket', iface], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-	    const lines = util.grep(output, 'lease_time');
-	    if (lines.length && lines[0].startsWith('lease_time')) {
-	      result = true;
-	    }
-	  } catch {
-	    util.noop();
-	  }
-	  return result;
-	}
-
-	function getLinuxIfaceDNSsuffix(connectionName) {
-	  if (connectionName) {
-	    try {
-	      const output = execFileSync('nmcli', ['connection', 'show', connectionName], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-	      const result = util.grep(output, 'ipv4.dns-search');
-	      const resultFormat = result.replace(/\s+/g, ' ').trim();
-	      const dnsSuffix = resultFormat.split(' ').slice(1).toString();
-	      return dnsSuffix === '--' ? 'Not defined' : dnsSuffix;
-	    } catch {
-	      return 'Unknown';
-	    }
-	  } else {
-	    return 'Unknown';
-	  }
-	}
-
-	function getLinuxIfaceIEEE8021xAuth(connectionName) {
-	  if (connectionName) {
-	    try {
-	      const output = execFileSync('nmcli', ['connection', 'show', connectionName], { ...util.execOptsLinux, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-	      const result = util.grep(output, '802-1x.eap');
-	      const resultFormat = result.replace(/\s+/g, ' ').trim();
-	      const authenticationProtocol = resultFormat.split(' ').slice(1).toString();
-
-	      return authenticationProtocol === '--' ? '' : authenticationProtocol;
-	    } catch {
-	      return 'Not defined';
-	    }
-	  } else {
-	    return 'Not defined';
-	  }
-	}
-
-	function getLinuxIfaceIEEE8021xState(authenticationProtocol) {
-	  if (authenticationProtocol) {
-	    if (authenticationProtocol === 'Not defined') {
-	      return 'Disabled';
-	    }
-	    return 'Enabled';
-	  } else {
-	    return 'Unknown';
-	  }
-	}
-
-	function testVirtualNic(iface, ifaceName, mac) {
-	  const virtualMacs = [
-	    '00:00:00:00:00:00',
-	    '00:03:FF',
-	    '00:05:69',
-	    '00:0C:29',
-	    '00:0F:4B',
-	    '00:13:07',
-	    '00:13:BE',
-	    '00:15:5d',
-	    '00:16:3E',
-	    '00:1C:42',
-	    '00:21:F6',
-	    '00:24:0B',
-	    '00:50:56',
-	    '00:A0:B1',
-	    '00:E0:C8',
-	    '08:00:27',
-	    '0A:00:27',
-	    '18:92:2C',
-	    '16:DF:49',
-	    '3C:F3:92',
-	    '54:52:00',
-	    'FC:15:97'
-	  ];
-	  if (mac) {
-	    return (
-	      virtualMacs.filter((item) => {
-	        return mac.toUpperCase().toUpperCase().startsWith(item.substring(0, mac.length));
-	      }).length > 0 ||
-	      iface.toLowerCase().indexOf(' virtual ') > -1 ||
-	      ifaceName.toLowerCase().indexOf(' virtual ') > -1 ||
-	      iface.toLowerCase().indexOf('vethernet ') > -1 ||
-	      ifaceName.toLowerCase().indexOf('vethernet ') > -1 ||
-	      iface.toLowerCase().startsWith('veth') ||
-	      ifaceName.toLowerCase().startsWith('veth') ||
-	      iface.toLowerCase().startsWith('vboxnet') ||
-	      ifaceName.toLowerCase().startsWith('vboxnet')
-	    );
-	  } else {
-	    return false;
-	  }
-	}
-
-	function networkInterfaces(callback, rescan, defaultString) {
-	  if (typeof callback === 'string') {
-	    defaultString = callback;
-	    rescan = true;
-	    callback = null;
-	  }
-
-	  if (typeof callback === 'boolean') {
-	    rescan = callback;
-	    callback = null;
-	    defaultString = '';
-	  }
-	  if (typeof rescan === 'undefined') {
-	    rescan = true;
-	  }
-	  defaultString = defaultString || '';
-	  defaultString = '' + defaultString;
-
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      const ifaces = os.networkInterfaces();
-
-	      let result = [];
-	      let nics = [];
-	      let dnsSuffixes = [];
-	      let nics8021xInfo = [];
-	      // seperate handling in OSX
-	      if (_darwin || _freebsd || _openbsd || _netbsd) {
-	        if (JSON.stringify(ifaces) === JSON.stringify(_ifaces) && !rescan) {
-	          // no changes - just return object
-	          result = _networkInterfaces;
-
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        } else {
-	          const defaultInterface = getDefaultNetworkInterface();
-	          _ifaces = JSON.parse(JSON.stringify(ifaces));
-
-	          nics = getDarwinNics();
-
-	          nics.forEach((nic) => {
-	            let ip4link = '';
-	            let ip4linksubnet = '';
-	            let ip6link = '';
-	            let ip6linksubnet = '';
-	            nic.ip4 = '';
-	            nic.ip6 = '';
-	            if ({}.hasOwnProperty.call(ifaces, nic.iface)) {
-	              ifaces[nic.iface].forEach((details) => {
-	                if (details.family === 'IPv4' || details.family === 4) {
-	                  if (!nic.ip4 && !nic.ip4.match(/^169.254/i)) {
-	                    nic.ip4 = details.address;
-	                    nic.ip4subnet = details.netmask;
-	                  }
-	                  if (nic.ip4.match(/^169.254/i)) {
-	                    ip4link = details.address;
-	                    ip4linksubnet = details.netmask;
-	                  }
-	                }
-	                if (details.family === 'IPv6' || details.family === 6) {
-	                  if (!nic.ip6 && !nic.ip6.match(/^fe80::/i)) {
-	                    nic.ip6 = details.address;
-	                    nic.ip6subnet = details.netmask;
-	                  }
-	                  if (nic.ip6.match(/^fe80::/i)) {
-	                    ip6link = details.address;
-	                    ip6linksubnet = details.netmask;
-	                  }
-	                }
-	              });
-	            }
-	            if (!nic.ip4 && ip4link) {
-	              nic.ip4 = ip4link;
-	              nic.ip4subnet = ip4linksubnet;
-	            }
-	            if (!nic.ip6 && ip6link) {
-	              nic.ip6 = ip6link;
-	              nic.ip6subnet = ip6linksubnet;
-	            }
-
-	            const ifaceSanitized = util.sanitizeString(nic.iface);
-
-	            result.push({
-	              iface: nic.iface,
-	              ifaceName: nic.iface,
-	              default: nic.iface === defaultInterface,
-	              ip4: nic.ip4,
-	              ip4subnet: nic.ip4subnet || '',
-	              ip6: nic.ip6,
-	              ip6subnet: nic.ip6subnet || '',
-	              mac: nic.mac,
-	              internal: nic.internal,
-	              virtual: nic.internal ? false : testVirtualNic(nic.iface, nic.iface, nic.mac),
-	              operstate: nic.operstate,
-	              type: nic.type,
-	              duplex: nic.duplex,
-	              mtu: nic.mtu,
-	              speed: nic.speed,
-	              dhcp: getDarwinIfaceDHCPstatus(ifaceSanitized),
-	              dnsSuffix: '',
-	              ieee8021xAuth: '',
-	              ieee8021xState: '',
-	              carrierChanges: 0
-	            });
-	          });
-	          _networkInterfaces = result;
-	          if (defaultString.toLowerCase().indexOf('default') >= 0) {
-	            result = result.filter((item) => item.default);
-	            if (result.length > 0) {
-	              result = result[0];
-	            } else {
-	              result = [];
-	            }
-	          }
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	      if (_linux) {
-	        if (JSON.stringify(ifaces) === JSON.stringify(_ifaces) && !rescan) {
-	          // no changes - just return object
-	          result = _networkInterfaces;
-
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        } else {
-	          _ifaces = JSON.parse(JSON.stringify(ifaces));
-	          _dhcpNics = getLinuxDHCPNics();
-	          const defaultInterface = getDefaultNetworkInterface();
-	          for (let dev in ifaces) {
-	            let ip4 = '';
-	            let ip4subnet = '';
-	            let ip6 = '';
-	            let ip6subnet = '';
-	            let mac = '';
-	            let duplex = '';
-	            let mtu = '';
-	            let speed = null;
-	            let carrierChanges = 0;
-	            let dhcp = false;
-	            let dnsSuffix = '';
-	            let ieee8021xAuth = '';
-	            let ieee8021xState = '';
-	            let type = '';
-
-	            let ip4link = '';
-	            let ip4linksubnet = '';
-	            let ip6link = '';
-	            let ip6linksubnet = '';
-
-	            if ({}.hasOwnProperty.call(ifaces, dev)) {
-	              const ifaceName = dev;
-	              ifaces[dev].forEach((details) => {
-	                if (details.family === 'IPv4' || details.family === 4) {
-	                  if (!ip4 && !ip4.match(/^169.254/i)) {
-	                    ip4 = details.address;
-	                    ip4subnet = details.netmask;
-	                  }
-	                  if (ip4.match(/^169.254/i)) {
-	                    ip4link = details.address;
-	                    ip4linksubnet = details.netmask;
-	                  }
-	                }
-	                if (details.family === 'IPv6' || details.family === 6) {
-	                  if (!ip6 && !ip6.match(/^fe80::/i)) {
-	                    ip6 = details.address;
-	                    ip6subnet = details.netmask;
-	                  }
-	                  if (ip6.match(/^fe80::/i)) {
-	                    ip6link = details.address;
-	                    ip6linksubnet = details.netmask;
-	                  }
-	                }
-	                mac = details.mac;
-	                // fallback due to https://github.com/nodejs/node/issues/13581 (node 8.1 - node 8.2)
-	                const nodeMainVersion = parseInt(process.versions.node.split('.'), 10);
-	                if (mac.indexOf('00:00:0') > -1 && (_linux || _darwin) && !details.internal && nodeMainVersion >= 8 && nodeMainVersion <= 11) {
-	                  if (Object.keys(_mac).length === 0) {
-	                    _mac = getMacAddresses();
-	                  }
-	                  mac = _mac[dev] || '';
-	                }
-	              });
-	              if (!ip4 && ip4link) {
-	                ip4 = ip4link;
-	                ip4subnet = ip4linksubnet;
-	              }
-	              if (!ip6 && ip6link) {
-	                ip6 = ip6link;
-	                ip6subnet = ip6linksubnet;
-	              }
-	              const iface = dev.split(':')[0].trim();
-	              const ifaceSanitized = util.sanitizeString(iface);
-	              const cmd = `echo -n "addr_assign_type: "; cat /sys/class/net/${ifaceSanitized}/addr_assign_type 2>/dev/null; echo;
-            echo -n "address: "; cat /sys/class/net/${ifaceSanitized}/address 2>/dev/null; echo;
-            echo -n "addr_len: "; cat /sys/class/net/${ifaceSanitized}/addr_len 2>/dev/null; echo;
-            echo -n "broadcast: "; cat /sys/class/net/${ifaceSanitized}/broadcast 2>/dev/null; echo;
-            echo -n "carrier: "; cat /sys/class/net/${ifaceSanitized}/carrier 2>/dev/null; echo;
-            echo -n "carrier_changes: "; cat /sys/class/net/${ifaceSanitized}/carrier_changes 2>/dev/null; echo;
-            echo -n "dev_id: "; cat /sys/class/net/${ifaceSanitized}/dev_id 2>/dev/null; echo;
-            echo -n "dev_port: "; cat /sys/class/net/${ifaceSanitized}/dev_port 2>/dev/null; echo;
-            echo -n "dormant: "; cat /sys/class/net/${ifaceSanitized}/dormant 2>/dev/null; echo;
-            echo -n "duplex: "; cat /sys/class/net/${ifaceSanitized}/duplex 2>/dev/null; echo;
-            echo -n "flags: "; cat /sys/class/net/${ifaceSanitized}/flags 2>/dev/null; echo;
-            echo -n "gro_flush_timeout: "; cat /sys/class/net/${ifaceSanitized}/gro_flush_timeout 2>/dev/null; echo;
-            echo -n "ifalias: "; cat /sys/class/net/${ifaceSanitized}/ifalias 2>/dev/null; echo;
-            echo -n "ifindex: "; cat /sys/class/net/${ifaceSanitized}/ifindex 2>/dev/null; echo;
-            echo -n "iflink: "; cat /sys/class/net/${ifaceSanitized}/iflink 2>/dev/null; echo;
-            echo -n "link_mode: "; cat /sys/class/net/${ifaceSanitized}/link_mode 2>/dev/null; echo;
-            echo -n "mtu: "; cat /sys/class/net/${ifaceSanitized}/mtu 2>/dev/null; echo;
-            echo -n "netdev_group: "; cat /sys/class/net/${ifaceSanitized}/netdev_group 2>/dev/null; echo;
-            echo -n "operstate: "; cat /sys/class/net/${ifaceSanitized}/operstate 2>/dev/null; echo;
-            echo -n "proto_down: "; cat /sys/class/net/${ifaceSanitized}/proto_down 2>/dev/null; echo;
-            echo -n "speed: "; cat /sys/class/net/${ifaceSanitized}/speed 2>/dev/null; echo;
-            echo -n "tx_queue_len: "; cat /sys/class/net/${ifaceSanitized}/tx_queue_len 2>/dev/null; echo;
-            echo -n "type: "; cat /sys/class/net/${ifaceSanitized}/type 2>/dev/null; echo;
-            echo -n "wireless: "; cat /proc/net/wireless 2>/dev/null | grep ${ifaceSanitized}; echo;
-            echo -n "wirelessspeed: "; iw dev ${ifaceSanitized} link 2>&1 | grep bitrate; echo;`;
-
-	              let lines = [];
-	              try {
-	                lines = execSync(cmd, util.execOptsLinux).toString().split('\n');
-	                const connectionName = getLinuxIfaceConnectionName(ifaceSanitized);
-	                dhcp = getLinuxIfaceDHCPstatus(ifaceSanitized, connectionName, _dhcpNics);
-	                dnsSuffix = getLinuxIfaceDNSsuffix(connectionName);
-	                ieee8021xAuth = getLinuxIfaceIEEE8021xAuth(connectionName);
-	                ieee8021xState = getLinuxIfaceIEEE8021xState(ieee8021xAuth);
-	              } catch {
-	                util.noop();
-	              }
-	              duplex = util.getValue(lines, 'duplex');
-	              duplex = duplex.startsWith('cat') ? '' : duplex;
-	              mtu = parseInt(util.getValue(lines, 'mtu'), 10);
-	              let myspeed = parseInt(util.getValue(lines, 'speed'), 10);
-	              speed = isNaN(myspeed) ? null : myspeed;
-	              const wirelessspeed = util.getValue(lines, 'tx bitrate');
-	              if (speed === null && wirelessspeed) {
-	                myspeed = parseFloat(wirelessspeed);
-	                speed = isNaN(myspeed) ? null : myspeed;
-	              }
-	              carrierChanges = parseInt(util.getValue(lines, 'carrier_changes'), 10);
-	              const operstate = util.getValue(lines, 'operstate');
-	              type = operstate === 'up' ? (util.getValue(lines, 'wireless').trim() ? 'wireless' : 'wired') : 'unknown';
-	              if (ifaceSanitized === 'lo' || ifaceSanitized.startsWith('bond')) {
-	                type = 'virtual';
-	              }
-
-	              let internal = ifaces[dev] && ifaces[dev][0] ? ifaces[dev][0].internal : false;
-	              if (dev.toLowerCase().indexOf('loopback') > -1 || ifaceName.toLowerCase().indexOf('loopback') > -1) {
-	                internal = true;
-	              }
-	              const virtual = internal ? false : testVirtualNic(dev, ifaceName, mac);
-	              result.push({
-	                iface: ifaceSanitized,
-	                ifaceName,
-	                default: iface === defaultInterface,
-	                ip4,
-	                ip4subnet,
-	                ip6,
-	                ip6subnet,
-	                mac,
-	                internal,
-	                virtual,
-	                operstate,
-	                type,
-	                duplex,
-	                mtu,
-	                speed,
-	                dhcp,
-	                dnsSuffix,
-	                ieee8021xAuth,
-	                ieee8021xState,
-	                carrierChanges
-	              });
-	            }
-	          }
-	          _networkInterfaces = result;
-	          if (defaultString.toLowerCase().indexOf('default') >= 0) {
-	            result = result.filter((item) => item.default);
-	            if (result.length > 0) {
-	              result = result[0];
-	            } else {
-	              result = [];
-	            }
-	          }
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	      if (_windows) {
-	        if (JSON.stringify(ifaces) === JSON.stringify(_ifaces) && !rescan) {
-	          // no changes - just return object
-	          result = _networkInterfaces;
-
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        } else {
-	          _ifaces = JSON.parse(JSON.stringify(ifaces));
-	          const defaultInterface = getDefaultNetworkInterface();
-
-	          getWindowsNics().then((nics) => {
-	            nics.forEach((nic) => {
-	              let found = false;
-	              Object.keys(ifaces).forEach((key) => {
-	                if (!found) {
-	                  ifaces[key].forEach((value) => {
-	                    if (Object.keys(value).indexOf('mac') >= 0) {
-	                      found = value['mac'] === nic.mac;
-	                    }
-	                  });
-	                }
-	              });
-
-	              if (!found) {
-	                ifaces[nic.name] = [{ mac: nic.mac }];
-	              }
-	            });
-	            nics8021xInfo = getWindowsWiredProfilesInformation();
-	            dnsSuffixes = getWindowsDNSsuffixes();
-	            for (let dev in ifaces) {
-	              const ifaceSanitized = util.sanitizeString(dev);
-
-	              let iface = dev;
-	              let ip4 = '';
-	              let ip4subnet = '';
-	              let ip6 = '';
-	              let ip6subnet = '';
-	              let mac = '';
-	              let duplex = '';
-	              let mtu = '';
-	              let speed = null;
-	              let carrierChanges = 0;
-	              let operstate = 'down';
-	              let dhcp = false;
-	              let dnsSuffix = '';
-	              let ieee8021xAuth = '';
-	              let ieee8021xState = '';
-	              let type = '';
-
-	              if ({}.hasOwnProperty.call(ifaces, dev)) {
-	                let ifaceName = dev;
-	                ifaces[dev].forEach((details) => {
-	                  if (details.family === 'IPv4' || details.family === 4) {
-	                    ip4 = details.address;
-	                    ip4subnet = details.netmask;
-	                  }
-	                  if (details.family === 'IPv6' || details.family === 6) {
-	                    if (!ip6 || ip6.match(/^fe80::/i)) {
-	                      ip6 = details.address;
-	                      ip6subnet = details.netmask;
-	                    }
-	                  }
-	                  mac = details.mac;
-	                  // fallback due to https://github.com/nodejs/node/issues/13581 (node 8.1 - node 8.2)
-	                  const nodeMainVersion = parseInt(process.versions.node.split('.'), 10);
-	                  if (mac.indexOf('00:00:0') > -1 && (_linux || _darwin) && !details.internal && nodeMainVersion >= 8 && nodeMainVersion <= 11) {
-	                    if (Object.keys(_mac).length === 0) {
-	                      _mac = getMacAddresses();
-	                    }
-	                    mac = _mac[dev] || '';
-	                  }
-	                });
-
-	                dnsSuffix = getWindowsIfaceDNSsuffix(dnsSuffixes.ifaces, ifaceSanitized);
-	                let foundFirst = false;
-	                nics.forEach((detail) => {
-	                  if (detail.mac === mac && !foundFirst) {
-	                    iface = detail.iface || iface;
-	                    ifaceName = detail.name;
-	                    dhcp = detail.dhcp;
-	                    operstate = detail.operstate;
-	                    speed = operstate === 'up' ? detail.speed : 0;
-	                    type = detail.type;
-	                    foundFirst = true;
-	                  }
-	                });
-
-	                if (
-	                  dev.toLowerCase().indexOf('wlan') >= 0 ||
-	                  ifaceName.toLowerCase().indexOf('wlan') >= 0 ||
-	                  ifaceName.toLowerCase().indexOf('802.11n') >= 0 ||
-	                  ifaceName.toLowerCase().indexOf('wireless') >= 0 ||
-	                  ifaceName.toLowerCase().indexOf('wi-fi') >= 0 ||
-	                  ifaceName.toLowerCase().indexOf('wifi') >= 0
-	                ) {
-	                  type = 'wireless';
-	                }
-
-	                const IEEE8021x = getWindowsIEEE8021x(type, ifaceSanitized, nics8021xInfo);
-	                ieee8021xAuth = IEEE8021x.protocol;
-	                ieee8021xState = IEEE8021x.state;
-	                let internal = ifaces[dev] && ifaces[dev][0] ? ifaces[dev][0].internal : false;
-	                if (dev.toLowerCase().indexOf('loopback') > -1 || ifaceName.toLowerCase().indexOf('loopback') > -1) {
-	                  internal = true;
-	                }
-	                const virtual = internal ? false : testVirtualNic(dev, ifaceName, mac);
-	                result.push({
-	                  iface,
-	                  ifaceName,
-	                  default: iface === defaultInterface,
-	                  ip4,
-	                  ip4subnet,
-	                  ip6,
-	                  ip6subnet,
-	                  mac,
-	                  internal,
-	                  virtual,
-	                  operstate,
-	                  type,
-	                  duplex,
-	                  mtu,
-	                  speed,
-	                  dhcp,
-	                  dnsSuffix,
-	                  ieee8021xAuth,
-	                  ieee8021xState,
-	                  carrierChanges
-	                });
-	              }
-	            }
-	            _networkInterfaces = result;
-	            if (defaultString.toLowerCase().indexOf('default') >= 0) {
-	              result = result.filter((item) => item.default);
-	              if (result.length > 0) {
-	                result = result[0];
-	              } else {
-	                result = [];
-	              }
-	            }
-	            if (callback) {
-	              callback(result);
-	            }
-	            resolve(result);
-	          });
-	        }
-	      }
-	    });
-	  });
-	}
-
-	network.networkInterfaces = networkInterfaces;
-
-	// --------------------------
-	// NET - Speed
-
-	function calcNetworkSpeed(iface, rx_bytes, tx_bytes, operstate, rx_dropped, rx_errors, tx_dropped, tx_errors) {
-	  const result = {
-	    iface,
-	    operstate,
-	    rx_bytes,
-	    rx_dropped,
-	    rx_errors,
-	    tx_bytes,
-	    tx_dropped,
-	    tx_errors,
-	    rx_sec: null,
-	    tx_sec: null,
-	    ms: 0
-	  };
-
-	  if (_network[iface] && _network[iface].ms) {
-	    result.ms = Date.now() - _network[iface].ms;
-	    result.rx_sec = rx_bytes - _network[iface].rx_bytes >= 0 ? (rx_bytes - _network[iface].rx_bytes) / (result.ms / 1000) : 0;
-	    result.tx_sec = tx_bytes - _network[iface].tx_bytes >= 0 ? (tx_bytes - _network[iface].tx_bytes) / (result.ms / 1000) : 0;
-	    _network[iface].rx_bytes = rx_bytes;
-	    _network[iface].tx_bytes = tx_bytes;
-	    _network[iface].rx_sec = result.rx_sec;
-	    _network[iface].tx_sec = result.tx_sec;
-	    _network[iface].ms = Date.now();
-	    _network[iface].last_ms = result.ms;
-	    _network[iface].operstate = operstate;
-	  } else {
-	    if (!_network[iface]) {
-	      _network[iface] = {};
-	    }
-	    _network[iface].rx_bytes = rx_bytes;
-	    _network[iface].tx_bytes = tx_bytes;
-	    _network[iface].rx_sec = null;
-	    _network[iface].tx_sec = null;
-	    _network[iface].ms = Date.now();
-	    _network[iface].last_ms = 0;
-	    _network[iface].operstate = operstate;
-	  }
-	  return result;
-	}
-
-	function networkStats(ifaces, callback) {
-	  let ifacesArray = [];
-
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      // fallback - if only callback is given
-	      if (util.isFunction(ifaces) && !callback) {
-	        callback = ifaces;
-	        ifacesArray = [getDefaultNetworkInterface()];
-	      } else {
-	        if (typeof ifaces !== 'string' && ifaces !== undefined) {
-	          if (callback) {
-	            callback([]);
-	          }
-	          return resolve([]);
-	        }
-	        ifaces = ifaces || getDefaultNetworkInterface();
-
-	        try {
-	          ifaces.__proto__.toLowerCase = util.stringToLower;
-	          ifaces.__proto__.replace = util.stringReplace;
-	          ifaces.__proto__.toString = util.stringToString;
-	          ifaces.__proto__.substr = util.stringSubstr;
-	          ifaces.__proto__.substring = util.stringSubstring;
-	          ifaces.__proto__.trim = util.stringTrim;
-	          ifaces.__proto__.startsWith = util.stringStartWith;
-	        } catch {
-	          Object.setPrototypeOf(ifaces, util.stringObj);
-	        }
-
-	        ifaces = ifaces.trim().replace(/,+/g, '|');
-	        ifacesArray = ifaces.split('|');
-	      }
-
-	      const result = [];
-
-	      const workload = [];
-	      if (ifacesArray.length && ifacesArray[0].trim() === '*') {
-	        ifacesArray = [];
-	        networkInterfaces(false).then((allIFaces) => {
-	          for (let iface of allIFaces) {
-	            ifacesArray.push(iface.iface);
-	          }
-	          networkStats(ifacesArray.join(',')).then((result) => {
-	            if (callback) {
-	              callback(result);
-	            }
-	            resolve(result);
-	          });
-	        });
-	      } else {
-	        for (let iface of ifacesArray) {
-	          workload.push(networkStatsSingle(iface.trim()));
-	        }
-	        if (workload.length) {
-	          Promise.all(workload).then((data) => {
-	            if (callback) {
-	              callback(data);
-	            }
-	            resolve(data);
-	          });
-	        } else {
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	    });
-	  });
-	}
-
-	function networkStatsSingle(iface) {
-	  function parseLinesWindowsPerfData(sections) {
-	    const perfData = [];
-	    for (let i in sections) {
-	      if ({}.hasOwnProperty.call(sections, i)) {
-	        if (sections[i].trim() !== '') {
-	          const lines = sections[i].trim().split('\r\n');
-	          perfData.push({
-	            name: util.getValue(lines, 'Name', ':').toLowerCase(),
-	            desc: util
-	              .getValue(lines, 'InterfaceDescription', ':')
-	              .replace(/[()[\] ]+/g, '')
-	              .replace(/#|\//g, '_')
-	              .toLowerCase(),
-	            rx_bytes: parseInt(util.getValue(lines, 'ReceivedBytes', ':'), 10),
-	            rx_errors: parseInt(util.getValue(lines, 'ReceivedPacketErrors', ':'), 10),
-	            rx_dropped: parseInt(util.getValue(lines, 'ReceivedDiscardedPackets', ':'), 10),
-	            tx_bytes: parseInt(util.getValue(lines, 'SentBytes', ':'), 10),
-	            tx_errors: parseInt(util.getValue(lines, 'OutboundPacketErrors', ':'), 10),
-	            tx_dropped: parseInt(util.getValue(lines, 'OutboundDiscardedPackets', ':'), 10)
-	          });
-	        }
-	      }
-	    }
-	    return perfData;
-	  }
-
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      const ifaceSanitized = util.sanitizeString(iface, true);
-
-	      let result = {
-	        iface: ifaceSanitized,
-	        operstate: 'unknown',
-	        rx_bytes: 0,
-	        rx_dropped: 0,
-	        rx_errors: 0,
-	        tx_bytes: 0,
-	        tx_dropped: 0,
-	        tx_errors: 0,
-	        rx_sec: null,
-	        tx_sec: null,
-	        ms: 0
-	      };
-
-	      let operstate = 'unknown';
-	      let rx_bytes = 0;
-	      let tx_bytes = 0;
-	      let rx_dropped = 0;
-	      let rx_errors = 0;
-	      let tx_dropped = 0;
-	      let tx_errors = 0;
-
-	      let cmd, lines, stats;
-	      if (
-	        !_network[ifaceSanitized] ||
-	        (_network[ifaceSanitized] && !_network[ifaceSanitized].ms) ||
-	        (_network[ifaceSanitized] && _network[ifaceSanitized].ms && Date.now() - _network[ifaceSanitized].ms >= 500)
-	      ) {
-	        if (_linux) {
-	          if (fs.existsSync('/sys/class/net/' + ifaceSanitized)) {
-	            cmd =
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/operstate; ' +
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/statistics/rx_bytes; ' +
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/statistics/tx_bytes; ' +
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/statistics/rx_dropped; ' +
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/statistics/rx_errors; ' +
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/statistics/tx_dropped; ' +
-	              'cat /sys/class/net/' +
-	              ifaceSanitized +
-	              '/statistics/tx_errors; ';
-	            exec(cmd, (error, stdout) => {
-	              if (!error) {
-	                lines = stdout.toString().split('\n');
-	                operstate = lines[0].trim();
-	                rx_bytes = parseInt(lines[1], 10);
-	                tx_bytes = parseInt(lines[2], 10);
-	                rx_dropped = parseInt(lines[3], 10);
-	                rx_errors = parseInt(lines[4], 10);
-	                tx_dropped = parseInt(lines[5], 10);
-	                tx_errors = parseInt(lines[6], 10);
-
-	                result = calcNetworkSpeed(ifaceSanitized, rx_bytes, tx_bytes, operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
-	              }
-	              resolve(result);
-	            });
-	          } else {
-	            resolve(result);
-	          }
-	        }
-	        if (_freebsd || _openbsd || _netbsd) {
-	          cmd = 'netstat -ibndI ' + ifaceSanitized; // lgtm [js/shell-command-constructed-from-input]
-	          exec(cmd, (error, stdout) => {
-	            if (!error) {
-	              lines = stdout.toString().split('\n');
-	              for (let i = 1; i < lines.length; i++) {
-	                const line = lines[i].replace(/ +/g, ' ').split(' ');
-	                if (line && line[0] && line[7] && line[10]) {
-	                  rx_bytes = rx_bytes + parseInt(line[7]);
-	                  if (line[6].trim() !== '-') {
-	                    rx_dropped = rx_dropped + parseInt(line[6]);
-	                  }
-	                  if (line[5].trim() !== '-') {
-	                    rx_errors = rx_errors + parseInt(line[5]);
-	                  }
-	                  tx_bytes = tx_bytes + parseInt(line[10]);
-	                  if (line[12] && line[12].trim() !== '-') {
-	                    tx_dropped = tx_dropped + parseInt(line[12]);
-	                  }
-	                  if (line[9].trim() !== '-') {
-	                    tx_errors = tx_errors + parseInt(line[9]);
-	                  }
-	                  operstate = 'up';
-	                }
-	              }
-	              result = calcNetworkSpeed(ifaceSanitized, rx_bytes, tx_bytes, operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
-	            }
-	            resolve(result);
-	          });
-	        }
-	        if (_darwin) {
-	          cmd = 'ifconfig ' + ifaceSanitized + ' | grep "status"'; // lgtm [js/shell-command-constructed-from-input]
-	          exec(cmd, (error, stdout) => {
-	            result.operstate = (stdout.toString().split(':')[1] || '').trim();
-	            result.operstate = (result.operstate || '').toLowerCase();
-	            result.operstate = result.operstate === 'active' ? 'up' : result.operstate === 'inactive' ? 'down' : 'unknown';
-	            cmd = 'netstat -bdnI ' + ifaceSanitized; // lgtm [js/shell-command-constructed-from-input]
-	            exec(cmd, (error, stdout) => {
-	              if (!error) {
-	                lines = stdout.toString().split('\n');
-	                // if there is less than 2 lines, no information for this interface was found
-	                if (lines.length > 1 && lines[1].trim() !== '') {
-	                  // skip header line
-	                  // use the second line because it is tied to the NIC instead of the ipv4 or ipv6 address
-	                  stats = lines[1].replace(/ +/g, ' ').split(' ');
-	                  const offset = stats.length > 11 ? 1 : 0;
-	                  rx_bytes = parseInt(stats[offset + 5]);
-	                  rx_dropped = parseInt(stats[offset + 10]);
-	                  rx_errors = parseInt(stats[offset + 4]);
-	                  tx_bytes = parseInt(stats[offset + 8]);
-	                  tx_dropped = parseInt(stats[offset + 10]);
-	                  tx_errors = parseInt(stats[offset + 7]);
-	                  result = calcNetworkSpeed(ifaceSanitized, rx_bytes, tx_bytes, result.operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
-	                }
-	              }
-	              resolve(result);
-	            });
-	          });
-	        }
-	        if (_windows) {
-	          let perfData = [];
-	          let ifaceName = ifaceSanitized;
-
-	          // Performance Data
-	          util
-	            .powerShell(
-	              'Get-NetAdapterStatistics | select Name,InterfaceDescription,ReceivedBytes,ReceivedPacketErrors,ReceivedDiscardedPackets,SentBytes,OutboundPacketErrors,OutboundDiscardedPackets | fl'
-	            )
-	            .then((stdout, error) => {
-	              if (!error) {
-	                const psections = stdout.toString().split(/\n\s*\n/);
-	                perfData = parseLinesWindowsPerfData(psections);
-	              }
-
-	              // Network Interfaces
-	              networkInterfaces(false).then((interfaces) => {
-	                // get bytes sent, received from perfData by name
-	                rx_bytes = 0;
-	                tx_bytes = 0;
-	                perfData.forEach((detail) => {
-	                  interfaces.forEach((det) => {
-	                    if (
-	                      (det.iface.toLowerCase() === ifaceSanitized.toLowerCase() ||
-	                        det.mac.toLowerCase() === ifaceSanitized.toLowerCase() ||
-	                        det.ip4.toLowerCase() === ifaceSanitized.toLowerCase() ||
-	                        det.ip6.toLowerCase() === ifaceSanitized.toLowerCase() ||
-	                        det.ifaceName
-	                          .replace(/[()[\] ]+/g, '')
-	                          .replace(/#|\//g, '_')
-	                          .toLowerCase() ===
-	                          ifaceSanitized
-	                            .replace(/[()[\] ]+/g, '')
-	                            .replace('#', '_')
-	                            .toLowerCase()) &&
-	                      (det.iface.toLowerCase() === detail.name ||
-	                        det.ifaceName
-	                          .replace(/[()[\] ]+/g, '')
-	                          .replace(/#|\//g, '_')
-	                          .toLowerCase() === detail.desc)
-	                    ) {
-	                      ifaceName = det.iface;
-	                      rx_bytes = detail.rx_bytes;
-	                      rx_dropped = detail.rx_dropped;
-	                      rx_errors = detail.rx_errors;
-	                      tx_bytes = detail.tx_bytes;
-	                      tx_dropped = detail.tx_dropped;
-	                      tx_errors = detail.tx_errors;
-	                      operstate = det.operstate;
-	                    }
-	                  });
-	                });
-	                if (rx_bytes && tx_bytes) {
-	                  result = calcNetworkSpeed(ifaceName, parseInt(rx_bytes), parseInt(tx_bytes), operstate, rx_dropped, rx_errors, tx_dropped, tx_errors);
-	                }
-	                resolve(result);
-	              });
-	            });
-	        }
-	      } else {
-	        result.rx_bytes = _network[ifaceSanitized].rx_bytes;
-	        result.tx_bytes = _network[ifaceSanitized].tx_bytes;
-	        result.rx_sec = _network[ifaceSanitized].rx_sec;
-	        result.tx_sec = _network[ifaceSanitized].tx_sec;
-	        result.ms = _network[ifaceSanitized].last_ms;
-	        result.operstate = _network[ifaceSanitized].operstate;
-	        resolve(result);
-	      }
-	    });
-	  });
-	}
-
-	network.networkStats = networkStats;
-
-	// --------------------------
-	// NET - connections (sockets)
-
-	function getProcessName(processes, pid) {
-	  let cmd = '';
-	  processes.forEach((line) => {
-	    const parts = line.split(' ');
-	    const id = parseInt(parts[0], 10) || -1;
-	    if (id === pid) {
-	      parts.shift();
-	      cmd = parts.join(' ').split(':')[0];
-	    }
-	  });
-	  cmd = cmd.split(' -')[0];
-	  cmd = cmd.split(' /')[0];
-	  return cmd;
-	  // const cmdParts = cmd.split('/');
-	  // return cmdParts[cmdParts.length - 1];
-	}
-
-	function networkConnections(callback) {
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      const result = [];
-	      if (_linux || _freebsd || _openbsd || _netbsd) {
-	        let cmd =
-	          'export LC_ALL=C; netstat -tunap | grep "ESTABLISHED\\|SYN_SENT\\|SYN_RECV\\|FIN_WAIT1\\|FIN_WAIT2\\|TIME_WAIT\\|CLOSE\\|CLOSE_WAIT\\|LAST_ACK\\|LISTEN\\|CLOSING\\|UNKNOWN"; unset LC_ALL';
-	        if (_freebsd || _openbsd || _netbsd) {
-	          cmd =
-	            'export LC_ALL=C; netstat -na | grep "ESTABLISHED\\|SYN_SENT\\|SYN_RECV\\|FIN_WAIT1\\|FIN_WAIT2\\|TIME_WAIT\\|CLOSE\\|CLOSE_WAIT\\|LAST_ACK\\|LISTEN\\|CLOSING\\|UNKNOWN"; unset LC_ALL';
-	        }
-	        exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	          let lines = stdout.toString().split('\n');
-	          if (!error && (lines.length > 1 || lines[0] !== '')) {
-	            lines.forEach((line) => {
-	              line = line.replace(/ +/g, ' ').split(' ');
-	              if (line.length >= 7) {
-	                let localip = line[3];
-	                let localport = '';
-	                const localaddress = line[3].split(':');
-	                if (localaddress.length > 1) {
-	                  localport = localaddress[localaddress.length - 1];
-	                  localaddress.pop();
-	                  localip = localaddress.join(':');
-	                }
-	                let peerip = line[4];
-	                let peerport = '';
-	                const peeraddress = line[4].split(':');
-	                if (peeraddress.length > 1) {
-	                  peerport = peeraddress[peeraddress.length - 1];
-	                  peeraddress.pop();
-	                  peerip = peeraddress.join(':');
-	                }
-	                const connstate = line[5];
-	                const proc = line[6].split('/');
-
-	                if (connstate) {
-	                  result.push({
-	                    protocol: line[0],
-	                    localAddress: localip,
-	                    localPort: localport,
-	                    peerAddress: peerip,
-	                    peerPort: peerport,
-	                    state: connstate,
-	                    pid: proc[0] && proc[0] !== '-' ? parseInt(proc[0], 10) : null,
-	                    process: proc[1] ? proc[1].split(' ')[0].split(':')[0] : ''
-	                  });
-	                }
-	              }
-	            });
-	            if (callback) {
-	              callback(result);
-	            }
-	            resolve(result);
-	          } else {
-	            cmd = 'ss -tunap | grep "ESTAB\\|SYN-SENT\\|SYN-RECV\\|FIN-WAIT1\\|FIN-WAIT2\\|TIME-WAIT\\|CLOSE\\|CLOSE-WAIT\\|LAST-ACK\\|LISTEN\\|CLOSING"';
-	            exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	              if (!error) {
-	                const lines = stdout.toString().split('\n');
-	                lines.forEach((line) => {
-	                  line = line.replace(/ +/g, ' ').split(' ');
-	                  if (line.length >= 6) {
-	                    let localip = line[4];
-	                    let localport = '';
-	                    const localaddress = line[4].split(':');
-	                    if (localaddress.length > 1) {
-	                      localport = localaddress[localaddress.length - 1];
-	                      localaddress.pop();
-	                      localip = localaddress.join(':');
-	                    }
-	                    let peerip = line[5];
-	                    let peerport = '';
-	                    const peeraddress = line[5].split(':');
-	                    if (peeraddress.length > 1) {
-	                      peerport = peeraddress[peeraddress.length - 1];
-	                      peeraddress.pop();
-	                      peerip = peeraddress.join(':');
-	                    }
-	                    let connstate = line[1];
-	                    if (connstate === 'ESTAB') {
-	                      connstate = 'ESTABLISHED';
-	                    }
-	                    if (connstate === 'TIME-WAIT') {
-	                      connstate = 'TIME_WAIT';
-	                    }
-	                    let pid = null;
-	                    let process = '';
-	                    if (line.length >= 7 && line[6].indexOf('users:') > -1) {
-	                      const proc = line[6].replace('users:(("', '').replace(/"/g, '').replace('pid=', '').split(',');
-	                      if (proc.length > 2) {
-	                        process = proc[0];
-	                        const pidValue = parseInt(proc[1], 10);
-	                        if (pidValue > 0) {
-	                          pid = pidValue;
-	                        }
-	                      }
-	                    }
-	                    if (connstate) {
-	                      result.push({
-	                        protocol: line[0],
-	                        localAddress: localip,
-	                        localPort: localport,
-	                        peerAddress: peerip,
-	                        peerPort: peerport,
-	                        state: connstate,
-	                        pid,
-	                        process
-	                      });
-	                    }
-	                  }
-	                });
-	              }
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            });
-	          }
-	        });
-	      }
-	      if (_darwin) {
-	        const cmd = 'netstat -natvln | head -n2; netstat -natvln | grep "tcp4\\|tcp6\\|udp4\\|udp6"';
-	        const states = 'ESTABLISHED|SYN_SENT|SYN_RECV|FIN_WAIT1|FIN_WAIT_1|FIN_WAIT2|FIN_WAIT_2|TIME_WAIT|CLOSE|CLOSE_WAIT|LAST_ACK|LISTEN|CLOSING|UNKNOWN'.split('|');
-	        exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	          if (!error) {
-	            exec('ps -axo pid,command', { maxBuffer: 1024 * 102400 }, (err2, stdout2) => {
-	              let processes = stdout2.toString().split('\n');
-	              processes = processes.map((line) => {
-	                return line.trim().replace(/ +/g, ' ');
-	              });
-	              const lines = stdout.toString().split('\n');
-	              lines.shift();
-	              let pidPos = 8;
-	              if (lines.length > 1 && lines[0].indexOf('pid') > 0) {
-	                const header = (lines.shift() || '')
-	                  .replace(/ Address/g, '_Address')
-	                  .replace(/process:/g, '')
-	                  .replace(/ +/g, ' ')
-	                  .split(' ');
-	                pidPos = header.indexOf('pid');
-	              }
-	              lines.forEach((line) => {
-	                line = line.replace(/ +/g, ' ').split(' ');
-	                if (line.length >= 8) {
-	                  let localip = line[3];
-	                  let localport = '';
-	                  const localaddress = line[3].split('.');
-	                  if (localaddress.length > 1) {
-	                    localport = localaddress[localaddress.length - 1];
-	                    localaddress.pop();
-	                    localip = localaddress.join('.');
-	                  }
-	                  let peerip = line[4];
-	                  let peerport = '';
-	                  const peeraddress = line[4].split('.');
-	                  if (peeraddress.length > 1) {
-	                    peerport = peeraddress[peeraddress.length - 1];
-	                    peeraddress.pop();
-	                    peerip = peeraddress.join('.');
-	                  }
-	                  const hasState = states.indexOf(line[5]) >= 0;
-	                  const connstate = hasState ? line[5] : 'UNKNOWN';
-	                  let pidField = '';
-	                  if (line[line.length - 9] && line[line.length - 9].indexOf(':') >= 0) {
-	                    pidField = line[line.length - 9].split(':')[1];
-	                  } else {
-	                    pidField = line[pidPos + (hasState ? 0 : -1)] || '';
-
-	                    if (pidField.indexOf(':') >= 0) {
-	                      pidField = pidField.split(':')[1];
-	                    }
-	                  }
-	                  const pid = parseInt(pidField, 10);
-	                  if (connstate) {
-	                    result.push({
-	                      protocol: line[0],
-	                      localAddress: localip,
-	                      localPort: localport,
-	                      peerAddress: peerip,
-	                      peerPort: peerport,
-	                      state: connstate,
-	                      pid: pid,
-	                      process: getProcessName(processes, pid)
-	                    });
-	                  }
-	                }
-	              });
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            });
-	          } else {
-	            if (callback) {
-	              callback(result);
-	            }
-	            resolve(result);
-	          }
-	        });
-	      }
-	      if (_windows) {
-	        let cmd = 'netstat -nao';
-	        try {
-	          exec(cmd, util.execOptsWin, (error, stdout) => {
-	            if (!error) {
-	              let lines = stdout.toString().split('\r\n');
-
-	              lines.forEach((line) => {
-	                line = line.trim().replace(/ +/g, ' ').split(' ');
-	                if (line.length >= 4) {
-	                  let localip = line[1];
-	                  let localport = '';
-	                  const localaddress = line[1].split(':');
-	                  if (localaddress.length > 1) {
-	                    localport = localaddress[localaddress.length - 1];
-	                    localaddress.pop();
-	                    localip = localaddress.join(':');
-	                  }
-	                  localip = localip.replace(/\[/g, '').replace(/\]/g, '');
-	                  let peerip = line[2];
-	                  let peerport = '';
-	                  const peeraddress = line[2].split(':');
-	                  if (peeraddress.length > 1) {
-	                    peerport = peeraddress[peeraddress.length - 1];
-	                    peeraddress.pop();
-	                    peerip = peeraddress.join(':');
-	                  }
-	                  peerip = peerip.replace(/\[/g, '').replace(/\]/g, '');
-	                  const pid = util.toInt(line[4]);
-	                  let connstate = line[3];
-	                  if (connstate === 'HERGESTELLT') {
-	                    connstate = 'ESTABLISHED';
-	                  }
-	                  if (connstate.startsWith('ABH')) {
-	                    connstate = 'LISTEN';
-	                  }
-	                  if (connstate === 'SCHLIESSEN_WARTEN') {
-	                    connstate = 'CLOSE_WAIT';
-	                  }
-	                  if (connstate === 'WARTEND') {
-	                    connstate = 'TIME_WAIT';
-	                  }
-	                  if (connstate === 'SYN_GESENDET') {
-	                    connstate = 'SYN_SENT';
-	                  }
-
-	                  if (connstate === 'LISTENING') {
-	                    connstate = 'LISTEN';
-	                  }
-	                  if (connstate === 'SYN_RECEIVED') {
-	                    connstate = 'SYN_RECV';
-	                  }
-	                  if (connstate === 'FIN_WAIT_1') {
-	                    connstate = 'FIN_WAIT1';
-	                  }
-	                  if (connstate === 'FIN_WAIT_2') {
-	                    connstate = 'FIN_WAIT2';
-	                  }
-	                  if (line[0].toLowerCase() !== 'udp' && connstate) {
-	                    result.push({
-	                      protocol: line[0].toLowerCase(),
-	                      localAddress: localip,
-	                      localPort: localport,
-	                      peerAddress: peerip,
-	                      peerPort: peerport,
-	                      state: connstate,
-	                      pid,
-	                      process: ''
-	                    });
-	                  } else if (line[0].toLowerCase() === 'udp') {
-	                    result.push({
-	                      protocol: line[0].toLowerCase(),
-	                      localAddress: localip,
-	                      localPort: localport,
-	                      peerAddress: peerip,
-	                      peerPort: peerport,
-	                      state: '',
-	                      pid: parseInt(line[3], 10),
-	                      process: ''
-	                    });
-	                  }
-	                }
-	              });
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            } else {
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            }
-	          });
-	        } catch {
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	    });
-	  });
-	}
-
-	network.networkConnections = networkConnections;
-
-	function networkGatewayDefault(callback) {
-	  return new Promise((resolve) => {
-	    process.nextTick(() => {
-	      let result = '';
-	      if (_linux || _freebsd || _openbsd || _netbsd) {
-	        const cmd = 'ip route get 1';
-	        try {
-	          exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	            if (!error) {
-	              let lines = stdout.toString().split('\n');
-	              const line = lines && lines[0] ? lines[0] : '';
-	              let parts = line.split(' via ');
-	              if (parts && parts[1]) {
-	                parts = parts[1].split(' ');
-	                result = parts[0];
-	              }
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            } else {
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            }
-	          });
-	        } catch {
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	      if (_darwin) {
-	        let cmd = 'route -n get default';
-	        try {
-	          exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	            if (!error) {
-	              const lines = stdout
-	                .toString()
-	                .split('\n')
-	                .map((line) => line.trim());
-	              result = util.getValue(lines, 'gateway');
-	            }
-	            if (!result) {
-	              cmd = "netstat -rn | awk '/default/ {print $2}'";
-	              exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	                const lines = stdout
-	                  .toString()
-	                  .split('\n')
-	                  .map((line) => line.trim());
-	                result = lines.find((line) =>
-	                  /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(line)
-	                );
-	                if (callback) {
-	                  callback(result);
-	                }
-	                resolve(result);
-	              });
-	            } else {
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            }
-	          });
-	        } catch {
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	      if (_windows) {
-	        try {
-	          exec('netstat -r', util.execOptsWin, (error, stdout) => {
-	            const lines = stdout.toString().split(os.EOL);
-	            lines.forEach((line) => {
-	              line = line.replace(/\s+/g, ' ').trim();
-	              if (line.indexOf('0.0.0.0 0.0.0.0') > -1 && !/[a-zA-Z]/.test(line)) {
-	                const parts = line.split(' ');
-	                if (parts.length >= 5 && parts[parts.length - 3].indexOf('.') > -1) {
-	                  result = parts[parts.length - 3];
-	                }
-	              }
-	            });
-	            if (!result) {
-	              util.powerShell("Get-CimInstance -ClassName Win32_IP4RouteTable | Where-Object { $_.Destination -eq '0.0.0.0' -and $_.Mask -eq '0.0.0.0' }").then((data) => {
-	                let lines = data.toString().split('\r\n');
-	                if (lines.length > 1 && !result) {
-	                  result = util.getValue(lines, 'NextHop');
-	                  if (callback) {
-	                    callback(result);
-	                  }
-	                  resolve(result);
-	                  // } else {
-	                  //   exec('ipconfig', util.execOptsWin, function (error, stdout) {
-	                  //     let lines = stdout.toString().split('\r\n');
-	                  //     lines.forEach(function (line) {
-	                  //       line = line.trim().replace(/\. /g, '');
-	                  //       line = line.trim().replace(/ +/g, '');
-	                  //       const parts = line.split(':');
-	                  //       if ((parts[0].toLowerCase().startsWith('standardgate') || parts[0].toLowerCase().indexOf('gateway') > -1 || parts[0].toLowerCase().indexOf('enlace') > -1) && parts[1]) {
-	                  //         result = parts[1];
-	                  //       }
-	                  //     });
-	                  //     if (callback) { callback(result); }
-	                  //     resolve(result);
-	                  //   });
-	                }
-	              });
-	            } else {
-	              if (callback) {
-	                callback(result);
-	              }
-	              resolve(result);
-	            }
-	          });
-	        } catch {
-	          if (callback) {
-	            callback(result);
-	          }
-	          resolve(result);
-	        }
-	      }
-	    });
-	  });
-	}
-
-	network.networkGatewayDefault = networkGatewayDefault;
-	return network;
 }
 
 var wifi = {};
@@ -13752,7 +13855,7 @@ function requireWifi () {
 	}
 
 	function nmiDeviceLinux(iface) {
-	  const cmd = `nmcli -t -f general,wifi-properties,capabilities,ip4,ip6 device show ${iface} 2> /dev/null`;
+	  const cmd = `nmcli -t -f general,wifi-properties,capabilities,ip4,ip6 device show ${util.sanitizeString(iface, true)} 2> /dev/null`;
 	  try {
 	    const lines = execSync(cmd, util.execOptsLinux).toString().split('\n');
 	    const ssid = util.getValue(lines, 'GENERAL.CONNECTION');
@@ -14439,6 +14542,8 @@ function requireProcesses () {
 	};
 	const _services_cpu = {
 	  all: 0,
+	  all_utime: 0,
+	  all_stime: 0,
 	  list: {},
 	  ms: 0,
 	  result: {}
@@ -14657,12 +14762,20 @@ function requireProcesses () {
 	                });
 	                if (_linux) {
 	                  // calc process_cpu - ps is not accurate in linux!
+	                  // ps pcpu is a lifetime average, the /proc values below are an interval share -
+	                  // drop the ps seed instead of adding both (#1007)
+	                  result.forEach((item) => {
+	                    item.cpu = 0;
+	                  });
 	                  let cmd = 'cat /proc/stat | grep "cpu "';
 	                  for (let i in result) {
 	                    for (let j in result[i].pids) {
 	                      cmd += ';cat /proc/' + result[i].pids[j] + '/stat';
 	                    }
 	                  }
+	                  // freeze the baseline before the async call - a concurrent call overwrites _services_cpu
+	                  // and would leave this one dividing by a few jiffies (#1007)
+	                  const cpuBaseline = Object.assign({}, _services_cpu);
 	                  exec(cmd, { maxBuffer: 1024 * 102400 }, function (error, stdout) {
 	                    let curr_processes = stdout.toString().split('\n');
 
@@ -14673,7 +14786,7 @@ function requireProcesses () {
 	                    let list_new = {};
 	                    let resultProcess = {};
 	                    curr_processes.forEach((element) => {
-	                      resultProcess = calcProcStatLinux(element, all, _services_cpu);
+	                      resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                      if (resultProcess.pid) {
 	                        let listPos = -1;
@@ -14693,9 +14806,7 @@ function requireProcesses () {
 	                          cpuu: resultProcess.cpuu,
 	                          cpus: resultProcess.cpus,
 	                          utime: resultProcess.utime,
-	                          stime: resultProcess.stime,
-	                          cutime: resultProcess.cutime,
-	                          cstime: resultProcess.cstime
+	                          stime: resultProcess.stime
 	                        };
 	                      }
 	                    });
@@ -14870,6 +14981,19 @@ function requireProcesses () {
 	  return user + nice + system + idle + iowait + irq + softirq + steal + guest + guest_nice;
 	}
 
+	// drops NaN/Infinity/negative values and scales cpuu + cpus down proportionally
+	// if their sum exceeds 100 (normalized against all cores)
+	function clampCpuPair(cpuu, cpus) {
+	  if (!isFinite(cpuu) || cpuu < 0) { cpuu = 0; }
+	  if (!isFinite(cpus) || cpus < 0) { cpus = 0; }
+	  const total = cpuu + cpus;
+	  if (total > 100) {
+	    cpuu = (cpuu / total) * 100;
+	    cpus = (cpus / total) * 100;
+	  }
+	  return { cpuu: cpuu, cpus: cpus };
+	}
+
 	function calcProcStatLinux(line, all, _cpu_old) {
 	  let statparts = line.replace(/ +/g, ' ').split(')');
 	  if (statparts.length >= 2) {
@@ -14878,35 +15002,34 @@ function requireProcesses () {
 	      let pid = parseInt(statparts[0].split(' ')[0]);
 	      let utime = parseInt(parts[12]);
 	      let stime = parseInt(parts[13]);
-	      let cutime = parseInt(parts[14]);
-	      let cstime = parseInt(parts[15]);
 
-	      // calc
+	      // calc - child times (cutime/cstime) are deliberately left out: reaping a child adds its
+	      // whole lifetime in one interval, which is what produced the >100% spikes in #1007.
+	      // top, htop and Task Manager exclude them too.
 	      let cpuu = 0;
 	      let cpus = 0;
 	      if (_cpu_old.all > 0 && _cpu_old.list[pid]) {
-	        cpuu = ((utime + cutime - _cpu_old.list[pid].utime - _cpu_old.list[pid].cutime) / (all - _cpu_old.all)) * 100; // user
-	        cpus = ((stime + cstime - _cpu_old.list[pid].stime - _cpu_old.list[pid].cstime) / (all - _cpu_old.all)) * 100; // system
+	        const delta = all - _cpu_old.all;
+	        cpuu = delta > 0 ? ((utime - _cpu_old.list[pid].utime) / delta) * 100 : 0; // user
+	        cpus = delta > 0 ? ((stime - _cpu_old.list[pid].stime) / delta) * 100 : 0; // system
 	      } else {
-	        cpuu = ((utime + cutime) / all) * 100; // user
-	        cpus = ((stime + cstime) / all) * 100; // system
+	        cpuu = all > 0 ? (utime / all) * 100 : 0; // user
+	        cpus = all > 0 ? (stime / all) * 100 : 0; // system
 	      }
+	      // normalized against all cores, so 100 is the ceiling for cpuu + cpus
+	      const clamped = clampCpuPair(cpuu, cpus);
 	      return {
 	        pid: pid,
 	        utime: utime,
 	        stime: stime,
-	        cutime: cutime,
-	        cstime: cstime,
-	        cpuu: cpuu,
-	        cpus: cpus
+	        cpuu: clamped.cpuu,
+	        cpus: clamped.cpus
 	      };
 	    } else {
 	      return {
 	        pid: 0,
 	        utime: 0,
 	        stime: 0,
-	        cutime: 0,
-	        cstime: 0,
 	        cpuu: 0,
 	        cpus: 0
 	      };
@@ -14916,8 +15039,6 @@ function requireProcesses () {
 	      pid: 0,
 	      utime: 0,
 	      stime: 0,
-	      cutime: 0,
-	      cstime: 0,
 	      cpuu: 0,
 	      cpus: 0
 	    };
@@ -14929,18 +15050,21 @@ function requireProcesses () {
 	  let cpuu = 0;
 	  let cpus = 0;
 	  if (_cpu_old.all > 0 && _cpu_old.list[procStat.pid]) {
-	    cpuu = ((procStat.utime - _cpu_old.list[procStat.pid].utime) / (all - _cpu_old.all)) * 100; // user
-	    cpus = ((procStat.stime - _cpu_old.list[procStat.pid].stime) / (all - _cpu_old.all)) * 100; // system
+	    const delta = all - _cpu_old.all;
+	    cpuu = delta > 0 ? ((procStat.utime - _cpu_old.list[procStat.pid].utime) / delta) * 100 : 0; // user
+	    cpus = delta > 0 ? ((procStat.stime - _cpu_old.list[procStat.pid].stime) / delta) * 100 : 0; // system
 	  } else {
-	    cpuu = (procStat.utime / all) * 100; // user
-	    cpus = (procStat.stime / all) * 100; // system
+	    cpuu = all > 0 ? (procStat.utime / all) * 100 : 0; // user
+	    cpus = all > 0 ? (procStat.stime / all) * 100 : 0; // system
 	  }
+	  // same ceiling as the linux path - cpuu + cpus stays inside [0, 100] (#1007)
+	  const clamped = clampCpuPair(cpuu, cpus);
 	  return {
 	    pid: procStat.pid,
 	    utime: procStat.utime,
 	    stime: procStat.stime,
-	    cpuu: cpuu > 0 ? cpuu : 0,
-	    cpus: cpus > 0 ? cpus : 0
+	    cpuu: clamped.cpuu,
+	    cpus: clamped.cpus
 	  };
 	}
 
@@ -15033,6 +15157,11 @@ function requireProcesses () {
 	    let command = '';
 	    let params = '';
 	    let fullcommand = line.substring(parsedhead[12].from + offset, parsedhead[12].to + offset2).trim();
+	    // zombies are printed as "[name] <defunct>" - drop the marker so the bracket handling below
+	    // sees a plain "[name]" and does not leak "] <defunct>" into command and name
+	    if (fullcommand.endsWith(' <defunct>')) {
+	      fullcommand = fullcommand.slice(0, -10).trim();
+	    }
 	    if (fullcommand.substr(fullcommand.length - 1) === ']') {
 	      fullcommand = fullcommand.slice(0, -1);
 	    }
@@ -15251,6 +15380,9 @@ function requireProcesses () {
 	                  result.list.forEach((element) => {
 	                    cmd += ';cat /proc/' + element.pid + '/stat';
 	                  });
+	                  // freeze the baseline before the async call - a concurrent call overwrites _processes_cpu
+	                  // and would leave this one dividing by a few jiffies (#1007)
+	                  const cpuBaseline = Object.assign({}, _processes_cpu);
 	                  exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
 	                    let curr_processes = stdout.toString().split('\n');
 
@@ -15261,7 +15393,7 @@ function requireProcesses () {
 	                    let list_new = {};
 	                    let resultProcess = {};
 	                    curr_processes.forEach((element) => {
-	                      resultProcess = calcProcStatLinux(element, all, _processes_cpu);
+	                      resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                      if (resultProcess.pid) {
 	                        // store pcpu in outer array
@@ -15281,9 +15413,7 @@ function requireProcesses () {
 	                          cpuu: resultProcess.cpuu,
 	                          cpus: resultProcess.cpus,
 	                          utime: resultProcess.utime,
-	                          stime: resultProcess.stime,
-	                          cutime: resultProcess.cutime,
-	                          cstime: resultProcess.cstime
+	                          stime: resultProcess.stime
 	                        };
 	                      }
 	                    });
@@ -15346,6 +15476,9 @@ function requireProcesses () {
 	          }
 	        } else if (_windows) {
 	          try {
+	            // freeze the baseline before the async call - a concurrent call overwrites _processes_cpu
+	            // and would leave this one with a non positive delta (#1007)
+	            const cpuBaseline = Object.assign({}, _processes_cpu);
 	            util
 	              .powerShell(
 	                `Get-CimInstance Win32_Process | select-Object ProcessId,ParentProcessId,ExecutionState,Caption,CommandLine,ExecutablePath,UserModeTime,KernelModeTime,WorkingSetSize,Priority,PageFileUsage,
@@ -15356,8 +15489,10 @@ function requireProcesses () {
 	                  const procs = [];
 	                  const procStats = [];
 	                  const list_new = {};
-	                  let allcpuu = 0;
-	                  let allcpus = 0;
+	                  // accumulate from the previous totals and add deltas only - a process that exited
+	                  // must not lower the total, otherwise the denominator turns negative (#559)
+	                  let allcpuu = cpuBaseline.all_utime;
+	                  let allcpus = cpuBaseline.all_stime;
 	                  let processArray = [];
 	                  try {
 	                    stdout = stdout.trim().replace(/^\uFEFF/, '');
@@ -15377,8 +15512,9 @@ function requireProcesses () {
 	                    const utime = element.UserModeTime;
 	                    const stime = element.KernelModeTime;
 	                    const memw = element.WorkingSetSize;
-	                    allcpuu = allcpuu + utime;
-	                    allcpus = allcpus + stime;
+	                    const cpuOld = cpuBaseline.list[pid];
+	                    allcpuu += utime - (cpuOld ? cpuOld.utime : 0);
+	                    allcpus += stime - (cpuOld ? cpuOld.stime : 0);
 	                    result.all++;
 	                    if (!statusValue) {
 	                      result.unknown++;
@@ -15423,7 +15559,7 @@ function requireProcesses () {
 	                  result.sleeping = result.all - result.running - result.blocked - result.unknown;
 	                  result.list = procs;
 	                  procStats.forEach((element) => {
-	                    let resultProcess = calcProcStatWin(element, allcpuu + allcpus, _processes_cpu);
+	                    let resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
 
 	                    // store pcpu in outer array
 	                    let listPos = result.list.map((e) => e.pid).indexOf(resultProcess.pid);
@@ -15546,12 +15682,16 @@ function requireProcesses () {
 	      if (procSanitized && processes.length && processes[0] !== '------') {
 	        if (_windows) {
 	          try {
+	            // freeze the baseline before the async call - a concurrent call overwrites _process_cpu
+	            // and would leave this one with a non positive delta (#1007)
+	            const cpuBaseline = Object.assign({}, _process_cpu);
 	            util.powerShell('Get-CimInstance Win32_Process | select ProcessId,Caption,UserModeTime,KernelModeTime,WorkingSetSize | ConvertTo-Json -compress').then((stdout, error) => {
 	              if (!error) {
 	                const procStats = [];
 	                const list_new = {};
-	                let allcpuu = 0;
-	                let allcpus = 0;
+	                // see processes() - never lower the total when a process exits (#559)
+	                let allcpuu = cpuBaseline.all_utime;
+	                let allcpus = cpuBaseline.all_stime;
 	                let processArray = [];
 	                try {
 	                  stdout = stdout.trim().replace(/^\uFEFF/, '');
@@ -15568,8 +15708,9 @@ function requireProcesses () {
 	                  const utime = element.UserModeTime;
 	                  const stime = element.KernelModeTime;
 	                  const mem = element.WorkingSetSize;
-	                  allcpuu = allcpuu + utime;
-	                  allcpus = allcpus + stime;
+	                  const cpuOld = cpuBaseline.list[pid];
+	                  allcpuu += utime - (cpuOld ? cpuOld.utime : 0);
+	                  allcpus += stime - (cpuOld ? cpuOld.stime : 0);
 
 	                  procStats.push({
 	                    pid: pid,
@@ -15627,7 +15768,7 @@ function requireProcesses () {
 
 	                // calculate proc stats for each proc
 	                procStats.forEach((element) => {
-	                  let resultProcess = calcProcStatWin(element, allcpuu + allcpus, _process_cpu);
+	                  let resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
 
 	                  let listPos = -1;
 	                  for (let j = 0; j < result.length; j++) {
@@ -15773,6 +15914,9 @@ function requireProcesses () {
 	                    cmd += ';cat /proc/' + result[i].pids[j] + '/stat';
 	                  }
 	                }
+	                // freeze the baseline before the async call - a concurrent call overwrites _process_cpu
+	                // and would leave this one dividing by a few jiffies (#1007)
+	                const cpuBaseline = Object.assign({}, _process_cpu);
 	                exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
 	                  let curr_processes = stdout.toString().split('\n');
 
@@ -15783,7 +15927,7 @@ function requireProcesses () {
 	                  let list_new = {};
 	                  let resultProcess = {};
 	                  curr_processes.forEach((element) => {
-	                    resultProcess = calcProcStatLinux(element, all, _process_cpu);
+	                    resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                    if (resultProcess.pid) {
 	                      // find result item
@@ -15803,9 +15947,7 @@ function requireProcesses () {
 	                        cpuu: resultProcess.cpuu,
 	                        cpus: resultProcess.cpus,
 	                        utime: resultProcess.utime,
-	                        stime: resultProcess.stime,
-	                        cutime: resultProcess.cutime,
-	                        cstime: resultProcess.cstime
+	                        stime: resultProcess.stime
 	                      };
 	                    }
 	                  });
@@ -16039,7 +16181,7 @@ function requireUsers () {
 
 	      // linux
 	      if (_linux) {
-	        exec('export LC_ALL=C; who --ips; echo "---"; w; unset LC_ALL | tail -n +2', (error, stdout) => {
+	        exec('export LC_ALL=C; who --ips; echo "---"; w | tail -n +2', (error, stdout) => {
 	          if (!error) {
 	            // lines / split
 	            let lines = stdout.toString().split('\n');
@@ -16446,6 +16588,12 @@ function requireInternet () {
 	        hostSanitized.startsWith('news:') ||
 	        hostSanitized.startsWith('nntp:')
 	      ) {
+	        if (callback) {
+	          callback(null);
+	        }
+	        return resolve(null);
+	      }
+	      if (hostSanitized.startsWith('-')) {
 	        if (callback) {
 	          callback(null);
 	        }
