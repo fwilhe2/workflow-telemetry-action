@@ -36,7 +36,7 @@
     "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.1",
     "@octokit/openapi-types": "^29.0.1",
-    "systeminformation": "^5.33.14"
+    "systeminformation": "^5.33.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

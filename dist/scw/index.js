@@ -41,7 +41,7 @@ function getDefaultExportFromCjs (x) {
 
 var lib = {};
 
-var version = "5.33.14";
+var version = "5.33.15";
 var require$$0 = {
 	version: version};
 
@@ -147,7 +147,7 @@ function requireUtil$8 () {
 	const mathMin = Math.min;
 
 	function isFunction(functionToCheck) {
-	  let getType = {};
+	  const getType = {};
 	  return functionToCheck && getType.toString.call(functionToCheck) === '[object Function]';
 	}
 
@@ -155,7 +155,7 @@ function requireUtil$8 () {
 	  const uniques = [];
 	  const stringify = {};
 	  for (let i = 0; i < obj.length; i++) {
-	    let keys = Object.keys(obj[i]);
+	    const keys = Object.keys(obj[i]);
 	    keys.sort((a, b) => {
 	      return a - b;
 	    });
@@ -254,7 +254,7 @@ function requireUtil$8 () {
 	      parts[1] += parts[2];
 	    }
 	    const p1 = (parts[1] || '').toLowerCase();
-	    let isPM =
+	    const isPM =
 	      p1.indexOf('pm') > -1 ||
 	      p1.indexOf('p.m.') > -1 ||
 	      p1.indexOf('p. m.') > -1 ||
@@ -721,7 +721,7 @@ function requireUtil$8 () {
 	    callback = opts;
 	    opts = execOptsWin;
 	  }
-	  let newCmd = 'chcp 65001 > nul && cmd /C ' + cmd + ' && chcp ' + codepage + ' > nul';
+	  const newCmd = 'chcp 65001 > nul && cmd /C ' + cmd + ' && chcp ' + codepage + ' > nul';
 	  exec(newCmd, opts, (error, stdout) => {
 	    callback(error, stdout);
 	  });
@@ -1169,7 +1169,7 @@ function requireUtil$8 () {
 	      model,
 	      serial,
 	      revisionCode,
-	      memory: 256 * Math.pow(2, memSizeCode),
+	      memory: 256 * 2 ** memSizeCode,
 	      manufacturer,
 	      processor,
 	      type: {}.hasOwnProperty.call(typeList, typeCode) ? typeList[typeCode] : '',
@@ -1288,7 +1288,7 @@ function requireUtil$8 () {
 	  const startStr = '<plist version';
 
 	  let pos = xmlStr.indexOf(startStr);
-	  let len = xmlStr.length;
+	  const len = xmlStr.length;
 	  while (xmlStr[pos] !== '>' && pos < len) {
 	    pos++;
 	  }
@@ -1297,7 +1297,7 @@ function requireUtil$8 () {
 	  let inTagStart = false;
 	  let inTagContent = false;
 	  let inTagEnd = false;
-	  let metaData = [{ tagStart: '', tagEnd: '', tagContent: '', key: '', data: null }];
+	  const metaData = [{ tagStart: '', tagEnd: '', tagContent: '', key: '', data: null }];
 	  let c = '';
 	  let cn = xmlStr[pos];
 
@@ -1497,6 +1497,38 @@ function requireUtil$8 () {
 
 	function getAppleModel(key) {
 	  const appleModelIds = [
+	    {
+	      key: 'Mac18,5',
+	      name: 'Mac mini',
+	      size: '',
+	      processor: 'M6',
+	      year: '2026',
+	      additional: ''
+	    },
+	    {
+	      key: 'Mac17,16',
+	      name: 'Mac mini',
+	      size: '',
+	      processor: 'M5 Pro',
+	      year: '2026',
+	      additional: ''
+	    },
+	    {
+	      key: 'Mac17,15',
+	      name: 'Mac Studio',
+	      size: '',
+	      processor: 'M5 Ultra',
+	      year: '2026',
+	      additional: ''
+	    },
+	    {
+	      key: 'Mac17,14',
+	      name: 'Mac Studio',
+	      size: '',
+	      processor: 'M5 Max',
+	      year: '2026',
+	      additional: ''
+	    },
 	    {
 	      key: 'Mac17,9',
 	      name: 'MacBook Pro',
