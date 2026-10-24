@@ -41,7 +41,7 @@ function getDefaultExportFromCjs (x) {
 
 var lib = {};
 
-var version = "5.33.15";
+var version = "5.33.16";
 var require$$0 = {
 	version: version};
 
@@ -800,6 +800,9 @@ function requireUtil$8 () {
 	        s[i] === "'" ||
 	        s[i] === '`' ||
 	        s[i] === '"' ||
+	        // unicode quotes (U+2018-U+201E) and dashes (U+2013-U+2015) are treated as ' " - by PowerShell
+	        (s[i] >= '‘' && s[i] <= '„') ||
+	        (s[i] >= '–' && s[i] <= '―') ||
 	        s[i].length > 1 ||
 	        (strict && s[i] === '(') ||
 	        (strict && s[i] === ')') ||
@@ -14554,7 +14557,7 @@ function requireProcesses () {
 
 	const util = requireUtil$8();
 
-	let _platform = process.platform;
+	const _platform = process.platform;
 
 	const _linux = _platform === 'linux' || _platform === 'android';
 	const _darwin = _platform === 'darwin';
@@ -14604,7 +14607,7 @@ function requireProcesses () {
 
 	function parseTimeUnix(time) {
 	  let result = time;
-	  let parts = time.replace(/ +/g, ' ').split(' ');
+	  const parts = time.replace(/ +/g, ' ').split(' ');
 	  if (parts.length === 5) {
 	    result = parts[4] + '-' + ('0' + ('JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'.indexOf(parts[1].toUpperCase()) / 3 + 1)).slice(-2) + '-' + ('0' + parts[2]).slice(-2) + ' ' + parts[3];
 	  }
@@ -14688,8 +14691,8 @@ function requireProcesses () {
 	          srvString = '------';
 	        }
 	        let srvs = srvString.split('|');
-	        let result = [];
-	        let dataSrv = [];
+	        const result = [];
+	        const dataSrv = [];
 
 	        if (_linux || _freebsd || _openbsd || _netbsd || _darwin) {
 	          if ((_linux || _freebsd || _openbsd || _netbsd) && srvString === '*') {
@@ -14746,23 +14749,20 @@ function requireProcesses () {
 	          if (srvString !== '' && srvs.length > 0) {
 	            util.execSafe('ps', args).then((stdout) => {
 	              if (stdout) {
-	                let lines = stdout.replace(/ +/g, ' ').replace(/,+/g, '.').split('\n');
-	                srvs.forEach(function (srv) {
+	                const lines = stdout.replace(/ +/g, ' ').replace(/,+/g, '.').split('\n');
+	                srvs.forEach((srv) => {
 	                  let ps;
 	                  if (_darwin) {
-	                    ps = lines.filter(function (e) {
-	                      return e.toLowerCase().indexOf(srv) !== -1;
-	                    });
+	                    ps = lines.filter((e) => e.toLowerCase().indexOf(srv) !== -1);
 	                  } else {
-	                    ps = lines.filter(function (e) {
-	                      return (
+	                    ps = lines.filter(
+	                      (e) =>
 	                        e.toLowerCase().indexOf(' ' + srv.toLowerCase() + ':') !== -1 ||
 	                        e.toLowerCase().indexOf('(' + srv.toLowerCase() + ' ') !== -1 ||
 	                        e.toLowerCase().indexOf('(' + srv.toLowerCase() + ')') !== -1 ||
 	                        e.toLowerCase().indexOf(' ' + srv.toLowerCase().replace(/[0-9.]/g, '') + ':') !== -1 ||
 	                        e.toLowerCase().indexOf('/' + srv.toLowerCase()) !== -1
-	                      );
-	                    });
+	                    );
 	                  }
 	                  const pids = [];
 	                  for (const p of ps) {
@@ -14776,20 +14776,8 @@ function requireProcesses () {
 	                    running: ps.length > 0,
 	                    startmode: '',
 	                    pids: pids,
-	                    cpu: parseFloat(
-	                      ps
-	                        .reduce(function (pv, cv) {
-	                          return pv + parseFloat(cv.trim().split(' ')[0]);
-	                        }, 0)
-	                        .toFixed(2)
-	                    ),
-	                    mem: parseFloat(
-	                      ps
-	                        .reduce(function (pv, cv) {
-	                          return pv + parseFloat(cv.trim().split(' ')[1]);
-	                        }, 0)
-	                        .toFixed(2)
-	                    )
+	                    cpu: parseFloat(ps.reduce((pv, cv) => pv + parseFloat(cv.trim().split(' ')[0]), 0).toFixed(2)),
+	                    mem: parseFloat(ps.reduce((pv, cv) => pv + parseFloat(cv.trim().split(' ')[1]), 0).toFixed(2))
 	                  });
 	                });
 	                if (_linux) {
@@ -14800,30 +14788,30 @@ function requireProcesses () {
 	                    item.cpu = 0;
 	                  });
 	                  let cmd = 'cat /proc/stat | grep "cpu "';
-	                  for (let i in result) {
-	                    for (let j in result[i].pids) {
+	                  for (const i in result) {
+	                    for (const j in result[i].pids) {
 	                      cmd += ';cat /proc/' + result[i].pids[j] + '/stat';
 	                    }
 	                  }
 	                  // freeze the baseline before the async call - a concurrent call overwrites _services_cpu
 	                  // and would leave this one dividing by a few jiffies (#1007)
 	                  const cpuBaseline = Object.assign({}, _services_cpu);
-	                  exec(cmd, { maxBuffer: 1024 * 102400 }, function (error, stdout) {
-	                    let curr_processes = stdout.toString().split('\n');
+	                  exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+	                    const curr_processes = stdout.toString().split('\n');
 
 	                    // first line (all - /proc/stat)
-	                    let all = parseProcStat(curr_processes.shift());
+	                    const all = parseProcStat(curr_processes.shift());
 
 	                    // process
-	                    let list_new = {};
+	                    const list_new = {};
 	                    let resultProcess = {};
 	                    curr_processes.forEach((element) => {
 	                      resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                      if (resultProcess.pid) {
 	                        let listPos = -1;
-	                        for (let i in result) {
-	                          for (let j in result[i].pids) {
+	                        for (const i in result) {
+	                          for (const j in result[i].pids) {
 	                            if (parseInt(result[i].pids[j]) === parseInt(resultProcess.pid)) {
 	                              listPos = i;
 	                            }
@@ -14863,11 +14851,9 @@ function requireProcesses () {
 	                args = ['-o', 'comm'];
 	                util.execSafe('ps', args).then((stdout) => {
 	                  if (stdout) {
-	                    let lines = stdout.replace(/ +/g, ' ').replace(/,+/g, '.').split('\n');
-	                    srvs.forEach(function (srv) {
-	                      let ps = lines.filter(function (e) {
-	                        return e.indexOf(srv) !== -1;
-	                      });
+	                    const lines = stdout.replace(/ +/g, ' ').replace(/,+/g, '.').split('\n');
+	                    srvs.forEach((srv) => {
+	                      const ps = lines.filter((e) => e.indexOf(srv) !== -1);
 	                      result.push({
 	                        name: srv,
 	                        running: ps.length > 0,
@@ -14881,7 +14867,7 @@ function requireProcesses () {
 	                    }
 	                    resolve(result);
 	                  } else {
-	                    srvs.forEach(function (srv) {
+	                    srvs.forEach((srv) => {
 	                      result.push({
 	                        name: srv,
 	                        running: false,
@@ -14910,22 +14896,23 @@ function requireProcesses () {
 	            if (srvs[0] !== '*') {
 	              wincommand += ' -Filter "';
 	              srvs.forEach((srv) => {
-	                wincommand += `Name='${srv}' or `;
+	                // whitelist: srv is inserted into a PowerShell string
+	                wincommand += `Name='${srv.replace(/[^a-zA-Z0-9 _.\-@]/g, '')}' or `;
 	              });
 	              wincommand = `${wincommand.slice(0, -4)}"`;
 	            }
 	            wincommand += ' | select Name,Caption,Started,StartMode,ProcessId | fl';
 	            util.powerShell(wincommand).then((stdout, error) => {
 	              if (!error) {
-	                let serviceSections = stdout.split(/\n\s*\n/);
+	                const serviceSections = stdout.split(/\n\s*\n/);
 	                serviceSections.forEach((element) => {
 	                  if (element.trim() !== '') {
-	                    let lines = element.trim().split('\r\n');
-	                    let srvName = util.getValue(lines, 'Name', ':', true).toLowerCase();
-	                    let srvCaption = util.getValue(lines, 'Caption', ':', true).toLowerCase();
-	                    let started = util.getValue(lines, 'Started', ':', true);
-	                    let startMode = util.getValue(lines, 'StartMode', ':', true);
-	                    let pid = util.getValue(lines, 'ProcessId', ':', true);
+	                    const lines = element.trim().split('\r\n');
+	                    const srvName = util.getValue(lines, 'Name', ':', true).toLowerCase();
+	                    const srvCaption = util.getValue(lines, 'Caption', ':', true).toLowerCase();
+	                    const started = util.getValue(lines, 'Started', ':', true);
+	                    const startMode = util.getValue(lines, 'StartMode', ':', true);
+	                    const pid = util.getValue(lines, 'ProcessId', ':', true);
 	                    if (srvString === '*' || srvs.indexOf(srvName) >= 0 || srvs.indexOf(srvCaption) >= 0) {
 	                      result.push({
 	                        name: srvName,
@@ -15016,8 +15003,12 @@ function requireProcesses () {
 	// drops NaN/Infinity/negative values and scales cpuu + cpus down proportionally
 	// if their sum exceeds 100 (normalized against all cores)
 	function clampCpuPair(cpuu, cpus) {
-	  if (!isFinite(cpuu) || cpuu < 0) { cpuu = 0; }
-	  if (!isFinite(cpus) || cpus < 0) { cpus = 0; }
+	  if (!isFinite(cpuu) || cpuu < 0) {
+	    cpuu = 0;
+	  }
+	  if (!isFinite(cpus) || cpus < 0) {
+	    cpus = 0;
+	  }
 	  const total = cpuu + cpus;
 	  if (total > 100) {
 	    cpuu = (cpuu / total) * 100;
@@ -15027,13 +15018,13 @@ function requireProcesses () {
 	}
 
 	function calcProcStatLinux(line, all, _cpu_old) {
-	  let statparts = line.replace(/ +/g, ' ').split(')');
+	  const statparts = line.replace(/ +/g, ' ').split(')');
 	  if (statparts.length >= 2) {
-	    let parts = statparts[1].split(' ');
+	    const parts = statparts[1].split(' ');
 	    if (parts.length >= 16) {
-	      let pid = parseInt(statparts[0].split(' ')[0]);
-	      let utime = parseInt(parts[12]);
-	      let stime = parseInt(parts[13]);
+	      const pid = parseInt(statparts[0].split(' ')[0]);
+	      const utime = parseInt(parts[12]);
+	      const stime = parseInt(parts[13]);
 
 	      // calc - child times (cutime/cstime) are deliberately left out: reaping a child adds its
 	      // whole lifetime in one interval, which is what produced the >100% spikes in #1007.
@@ -15113,7 +15104,7 @@ function requireProcesses () {
 	      result = result.substr(0, result.length - 1);
 	    }
 	    if (result.substr(0, 1) !== '[') {
-	      let parts = result.split('/');
+	      const parts = result.split('/');
 	      if (isNaN(parseInt(parts[parts.length - 1]))) {
 	        result = parts[parts.length - 1];
 	      } else {
@@ -15266,9 +15257,9 @@ function requireProcesses () {
 	  }
 
 	  function parseProcesses(lines) {
-	    let result = [];
+	    const result = [];
 	    if (lines.length > 1) {
-	      let head = lines[0];
+	      const head = lines[0];
 	      parsedhead = util.parseHead(head, 8);
 	      lines.shift();
 	      lines.forEach((line) => {
@@ -15317,7 +15308,7 @@ function requireProcesses () {
 	      return started;
 	    }
 
-	    let result = [];
+	    const result = [];
 	    lines.forEach((line) => {
 	      if (line.trim() !== '') {
 	        line = line.trim().replace(/ +/g, ' ').replace(/,+/g, '.');
@@ -15366,7 +15357,7 @@ function requireProcesses () {
 
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
-	      let result = {
+	      const result = {
 	        all: 0,
 	        running: 0,
 	        blocked: 0,
@@ -15416,20 +15407,20 @@ function requireProcesses () {
 	                  // and would leave this one dividing by a few jiffies (#1007)
 	                  const cpuBaseline = Object.assign({}, _processes_cpu);
 	                  exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	                    let curr_processes = stdout.toString().split('\n');
+	                    const curr_processes = stdout.toString().split('\n');
 
 	                    // first line (all - /proc/stat)
-	                    let all = parseProcStat(curr_processes.shift());
+	                    const all = parseProcStat(curr_processes.shift());
 
 	                    // process
-	                    let list_new = {};
+	                    const list_new = {};
 	                    let resultProcess = {};
 	                    curr_processes.forEach((element) => {
 	                      resultProcess = calcProcStatLinux(element, all, cpuBaseline);
 
 	                      if (resultProcess.pid) {
 	                        // store pcpu in outer array
-	                        let listPos = result.list
+	                        const listPos = result.list
 	                          .map((e) => {
 	                            return e.pid;
 	                          })
@@ -15473,7 +15464,7 @@ function requireProcesses () {
 	                }
 	                exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
 	                  if (!error) {
-	                    let lines = stdout.toString().split('\n');
+	                    const lines = stdout.toString().split('\n');
 	                    lines.shift();
 
 	                    result.list = parseProcesses2(lines).slice();
@@ -15591,10 +15582,10 @@ function requireProcesses () {
 	                  result.sleeping = result.all - result.running - result.blocked - result.unknown;
 	                  result.list = procs;
 	                  procStats.forEach((element) => {
-	                    let resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
+	                    const resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
 
 	                    // store pcpu in outer array
-	                    let listPos = result.list.map((e) => e.pid).indexOf(resultProcess.pid);
+	                    const listPos = result.list.map((e) => e.pid).indexOf(resultProcess.pid);
 	                    if (listPos >= 0) {
 	                      result.list[listPos].cpu = resultProcess.cpuu + resultProcess.cpus;
 	                      result.list[listPos].cpuu = resultProcess.cpuu;
@@ -15699,8 +15690,8 @@ function requireProcesses () {
 	      if (util.isPrototypePolluted() && processesString !== '*') {
 	        processesString = '------';
 	      }
-	      let processes = processesString.split('|');
-	      let result = [];
+	      const processes = processesString.split('|');
+	      const result = [];
 
 	      const procSanitized = util.isPrototypePolluted() ? '' : util.sanitizeShellString(proc) || '*';
 
@@ -15786,7 +15777,7 @@ function requireProcesses () {
 
 	                if (processesString !== '*') {
 	                  // add missing processes
-	                  let processesMissing = processes.filter((name) => procStats.filter((item) => item.name.toLowerCase().indexOf(name) >= 0).length === 0);
+	                  const processesMissing = processes.filter((name) => procStats.filter((item) => item.name.toLowerCase().indexOf(name) >= 0).length === 0);
 	                  processesMissing.forEach((procName) => {
 	                    result.push({
 	                      proc: procName,
@@ -15800,7 +15791,7 @@ function requireProcesses () {
 
 	                // calculate proc stats for each proc
 	                procStats.forEach((element) => {
-	                  let resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
+	                  const resultProcess = calcProcStatWin(element, allcpuu + allcpus, cpuBaseline);
 
 	                  let listPos = -1;
 	                  for (let j = 0; j < result.length; j++) {
@@ -15918,7 +15909,7 @@ function requireProcesses () {
 
 	              if (processesString !== '*') {
 	                // add missing processes
-	                let processesMissing = processes.filter((name) => {
+	                const processesMissing = processes.filter((name) => {
 	                  return (
 	                    procStats.filter((item) => {
 	                      return item.name.toLowerCase().indexOf(name) >= 0;
@@ -15941,8 +15932,8 @@ function requireProcesses () {
 	                  item.cpu = 0;
 	                });
 	                let cmd = 'cat /proc/stat | grep "cpu "';
-	                for (let i in result) {
-	                  for (let j in result[i].pids) {
+	                for (const i in result) {
+	                  for (const j in result[i].pids) {
 	                    cmd += ';cat /proc/' + result[i].pids[j] + '/stat';
 	                  }
 	                }
@@ -15950,13 +15941,13 @@ function requireProcesses () {
 	                // and would leave this one dividing by a few jiffies (#1007)
 	                const cpuBaseline = Object.assign({}, _process_cpu);
 	                exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	                  let curr_processes = stdout.toString().split('\n');
+	                  const curr_processes = stdout.toString().split('\n');
 
 	                  // first line (all - /proc/stat)
-	                  let all = parseProcStat(curr_processes.shift());
+	                  const all = parseProcStat(curr_processes.shift());
 
 	                  // process
-	                  let list_new = {};
+	                  const list_new = {};
 	                  let resultProcess = {};
 	                  curr_processes.forEach((element) => {
 	                    resultProcess = calcProcStatLinux(element, all, cpuBaseline);
@@ -15964,7 +15955,7 @@ function requireProcesses () {
 	                    if (resultProcess.pid) {
 	                      // find result item
 	                      let resultItemId = -1;
-	                      for (let i in result) {
+	                      for (const i in result) {
 	                        if (result[i].pids.indexOf(resultProcess.pid) >= 0) {
 	                          resultItemId = i;
 	                        }
