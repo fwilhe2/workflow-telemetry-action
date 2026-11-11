@@ -41,7 +41,7 @@ function getDefaultExportFromCjs (x) {
 
 var lib = {};
 
-var version = "5.33.16";
+var version = "5.33.19";
 var require$$0 = {
 	version: version};
 
@@ -147,8 +147,7 @@ function requireUtil$8 () {
 	const mathMin = Math.min;
 
 	function isFunction(functionToCheck) {
-	  const getType = {};
-	  return functionToCheck && getType.toString.call(functionToCheck) === '[object Function]';
+	  return typeof functionToCheck === 'function';
 	}
 
 	function unique(obj) {
@@ -2814,35 +2813,45 @@ function requireUtil$8 () {
 	  const http$1 = url.startsWith('https:') || url.indexOf(':443/') > 0 || url.indexOf(':8443/') > 0 ? https : http;
 	  const t = Date.now();
 	  return new Promise((resolve) => {
-	    const request = http$1
-	      .get(url, (res) => {
-	        res.on('data', () => {});
-	        res.on('end', () => {
+	    try {
+	      const request = http$1
+	        .get(url, (res) => {
+	          res.on('data', () => {});
+	          res.on('end', () => {
+	            resolve({
+	              url,
+	              statusCode: res.statusCode,
+	              message: res.statusMessage,
+	              time: Date.now() - t
+	            });
+	          });
+	        })
+	        .on('error', (e) => {
 	          resolve({
 	            url,
-	            statusCode: res.statusCode,
-	            message: res.statusMessage,
+	            statusCode: 404,
+	            message: e.message,
+	            time: Date.now() - t
+	          });
+	        })
+	        .setTimeout(timeout, () => {
+	          request.destroy();
+	          resolve({
+	            url,
+	            statusCode: 408,
+	            message: 'Request Timeout',
 	            time: Date.now() - t
 	          });
 	        });
-	      })
-	      .on('error', (e) => {
-	        resolve({
-	          url,
-	          statusCode: 404,
-	          message: e.message,
-	          time: Date.now() - t
-	        });
-	      })
-	      .setTimeout(timeout, () => {
-	        request.destroy();
-	        resolve({
-	          url,
-	          statusCode: 408,
-	          message: 'Request Timeout',
-	          time: Date.now() - t
-	        });
+	    } catch (e) {
+	      // http.get() throws synchronously on invalid URLs
+	      resolve({
+	        url,
+	        statusCode: 404,
+	        message: e.message,
+	        time: Date.now() - t
 	      });
+	    }
 	  });
 	}
 
@@ -2965,6 +2974,7 @@ function requireSystem () {
 	const _sunos = _platform === 'sunos';
 
 	function system$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -3348,6 +3358,7 @@ function requireSystem () {
 	  return '';
 	}
 	function bios(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -3477,6 +3488,7 @@ function requireSystem () {
 	system.bios = bios;
 
 	function baseboard(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = {
@@ -3654,6 +3666,7 @@ function requireSystem () {
 	}
 
 	function chassis(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  const chassisTypes = [
 	    'Other',
 	    'Unknown',
@@ -3849,7 +3862,7 @@ function requireNetwork () {
 	    let scopeid = 9999;
 
 	    // fallback - "first" external interface (sorted by scopeid)
-	    for (let dev in ifaces) {
+	    for (const dev in ifaces) {
 	      if ({}.hasOwnProperty.call(ifaces, dev)) {
 	        ifaces[dev].forEach((details) => {
 	          if (details && details.internal === false) {
@@ -3880,7 +3893,7 @@ function requireNetwork () {
 	        }
 	      });
 	      if (defaultIp) {
-	        for (let dev in ifaces) {
+	        for (const dev in ifaces) {
 	          if ({}.hasOwnProperty.call(ifaces, dev)) {
 	            ifaces[dev].forEach((details) => {
 	              if (details && details.address && details.address === defaultIp) {
@@ -4006,6 +4019,7 @@ function requireNetwork () {
 	network.getMacAddresses = getMacAddresses;
 
 	function networkInterfaceDefault(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = getDefaultNetworkInterface();
@@ -4024,7 +4038,7 @@ function requireNetwork () {
 
 	function parseLinesWindowsNics(sections, nconfigsections) {
 	  const nics = [];
-	  for (let i in sections) {
+	  for (const i in sections) {
 	    try {
 	      if ({}.hasOwnProperty.call(sections, i)) {
 	        if (sections[i].trim() !== '') {
@@ -4402,7 +4416,7 @@ function requireNetwork () {
 	      if (lines && lines.length) {
 	        const parts = lines[0].split(':');
 	        if (parts.length > 2) {
-	          for (let line of lines) {
+	          for (const line of lines) {
 	            if (line.indexOf(' inet ') >= 0 && line.indexOf(' dynamic ') >= 0) {
 	              const parts2 = line.split(' ');
 	              const nic = parts2[parts2.length - 1].trim();
@@ -4559,11 +4573,12 @@ function requireNetwork () {
 	    callback = null;
 	    defaultString = '';
 	  }
+	  callback = util.isFunction(callback) ? callback : null;
 	  if (typeof rescan === 'undefined') {
 	    rescan = true;
 	  }
-	  defaultString = defaultString || '';
-	  defaultString = '' + defaultString;
+	  // objects without string conversion would throw here
+	  defaultString = typeof defaultString === 'string' ? defaultString : '';
 
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
@@ -4682,7 +4697,7 @@ function requireNetwork () {
 	          _ifaces = JSON.parse(JSON.stringify(ifaces));
 	          _dhcpNics = getLinuxDHCPNics();
 	          const defaultInterface = getDefaultNetworkInterface();
-	          for (let dev in ifaces) {
+	          for (const dev in ifaces) {
 	            let ip4 = '';
 	            let ip4subnet = '';
 	            let ip6 = '';
@@ -4876,7 +4891,7 @@ function requireNetwork () {
 	            });
 	            nics8021xInfo = getWindowsWiredProfilesInformation();
 	            dnsSuffixes = getWindowsDNSsuffixes();
-	            for (let dev in ifaces) {
+	            for (const dev in ifaces) {
 	              const ifaceSanitized = util.sanitizeString(dev);
 
 	              let iface = dev;
@@ -4885,10 +4900,10 @@ function requireNetwork () {
 	              let ip6 = '';
 	              let ip6subnet = '';
 	              let mac = '';
-	              let duplex = '';
-	              let mtu = '';
+	              const duplex = '';
+	              const mtu = '';
 	              let speed = null;
-	              let carrierChanges = 0;
+	              const carrierChanges = 0;
 	              let operstate = 'down';
 	              let dhcp = false;
 	              let dnsSuffix = '';
@@ -5044,6 +5059,7 @@ function requireNetwork () {
 	}
 
 	function networkStats(ifaces, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  let ifacesArray = [];
 
 	  return new Promise((resolve) => {
@@ -5083,7 +5099,7 @@ function requireNetwork () {
 	      if (ifacesArray.length && ifacesArray[0].trim() === '*') {
 	        ifacesArray = [];
 	        networkInterfaces(false).then((allIFaces) => {
-	          for (let iface of allIFaces) {
+	          for (const iface of allIFaces) {
 	            ifacesArray.push(iface.iface);
 	          }
 	          networkStats(ifacesArray.join(',')).then((result) => {
@@ -5094,7 +5110,7 @@ function requireNetwork () {
 	          });
 	        });
 	      } else {
-	        for (let iface of ifacesArray) {
+	        for (const iface of ifacesArray) {
 	          workload.push(networkStatsSingle(iface.trim()));
 	        }
 	        if (workload.length) {
@@ -5118,7 +5134,7 @@ function requireNetwork () {
 	function networkStatsSingle(iface) {
 	  function parseLinesWindowsPerfData(sections) {
 	    const perfData = [];
-	    for (let i in sections) {
+	    for (const i in sections) {
 	      if ({}.hasOwnProperty.call(sections, i)) {
 	        if (sections[i].trim() !== '') {
 	          const lines = sections[i].trim().split('\r\n');
@@ -5384,6 +5400,7 @@ function requireNetwork () {
 	}
 
 	function networkConnections(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = [];
@@ -5395,7 +5412,7 @@ function requireNetwork () {
 	            'export LC_ALL=C; netstat -na | grep "ESTABLISHED\\|SYN_SENT\\|SYN_RECV\\|FIN_WAIT1\\|FIN_WAIT2\\|TIME_WAIT\\|CLOSE\\|CLOSE_WAIT\\|LAST_ACK\\|LISTEN\\|CLOSING\\|UNKNOWN"; unset LC_ALL';
 	        }
 	        exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
-	          let lines = stdout.toString().split('\n');
+	          const lines = stdout.toString().split('\n');
 	          if (!error && (lines.length > 1 || lines[0] !== '')) {
 	            lines.forEach((line) => {
 	              line = line.replace(/ +/g, ' ').split(' ');
@@ -5584,11 +5601,11 @@ function requireNetwork () {
 	        });
 	      }
 	      if (_windows) {
-	        let cmd = 'netstat -nao';
+	        const cmd = 'netstat -nao';
 	        try {
 	          exec(cmd, util.execOptsWin, (error, stdout) => {
 	            if (!error) {
-	              let lines = stdout.toString().split('\r\n');
+	              const lines = stdout.toString().split('\r\n');
 
 	              lines.forEach((line) => {
 	                line = line.trim().replace(/ +/g, ' ').split(' ');
@@ -5691,6 +5708,7 @@ function requireNetwork () {
 	network.networkConnections = networkConnections;
 
 	function networkGatewayDefault(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = '';
@@ -5699,7 +5717,7 @@ function requireNetwork () {
 	        try {
 	          exec(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
 	            if (!error) {
-	              let lines = stdout.toString().split('\n');
+	              const lines = stdout.toString().split('\n');
 	              const line = lines && lines[0] ? lines[0] : '';
 	              let parts = line.split(' via ');
 	              if (parts && parts[1]) {
@@ -5779,7 +5797,7 @@ function requireNetwork () {
 	            });
 	            if (!result) {
 	              util.powerShell("Get-CimInstance -ClassName Win32_IP4RouteTable | Where-Object { $_.Destination -eq '0.0.0.0' -and $_.Mask -eq '0.0.0.0' }").then((data) => {
-	                let lines = data.toString().split('\r\n');
+	                const lines = data.toString().split('\r\n');
 	                if (lines.length > 1 && !result) {
 	                  result = util.getValue(lines, 'NextHop');
 	                  if (callback) {
@@ -6051,6 +6069,7 @@ function requireOsinfo () {
 	// OS Information
 
 	function osInfo(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -6282,6 +6301,7 @@ function requireOsinfo () {
 	}
 
 	function versions(apps, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  let versionObject = {
 	    kernel: os.release(),
 	    apache: '',
@@ -6954,6 +6974,7 @@ function requireOsinfo () {
 	osinfo.versions = versions;
 
 	function shell(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (_windows) {
@@ -7040,6 +7061,7 @@ function requireOsinfo () {
 	}
 
 	function uuid(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -8360,6 +8382,7 @@ function requireCpu () {
 	// CPU - Processor Data
 
 	function cpu$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      getCpu().then((result) => {
@@ -8441,6 +8464,7 @@ function requireCpu () {
 	}
 
 	function cpuCurrentSpeed(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = getCpuCurrentSpeedSync();
@@ -8468,6 +8492,7 @@ function requireCpu () {
 	// if sensors are installed
 
 	function cpuTemperature(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -8799,6 +8824,7 @@ function requireCpu () {
 	// CPU Flags
 
 	function cpuFlags(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = '';
@@ -8951,6 +8977,7 @@ function requireCpu () {
 	// CPU Cache
 
 	function cpuCache(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -9350,6 +9377,7 @@ function requireCpu () {
 	}
 
 	function currentLoad(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (_current_cpu.ms === 0) {
@@ -9413,6 +9441,7 @@ function requireCpu () {
 	}
 
 	function fullLoad(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      getFullLoad().then((result) => {
@@ -9574,6 +9603,7 @@ function requireMemory () {
 	// SUnreclaim: 79352 kB
 
 	function mem(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -9782,6 +9812,7 @@ function requireMemory () {
 	memory.mem = mem;
 
 	function memLayout(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  function getManufacturer(manId) {
 	    const manIdSearch = manId.replace('0x', '').toUpperCase();
 	    if (manIdSearch.length >= 4 && {}.hasOwnProperty.call(RAM_manufacturers, manIdSearch)) {
@@ -10058,11 +10089,11 @@ function requireMemory () {
 	return memory;
 }
 
-var battery;
+var battery_1;
 var hasRequiredBattery;
 
 function requireBattery () {
-	if (hasRequiredBattery) return battery;
+	if (hasRequiredBattery) return battery_1;
 	hasRequiredBattery = 1;
 	// @ts-check;
 	// ==================================================================================
@@ -10127,7 +10158,7 @@ function requireBattery () {
 	  return result;
 	}
 
-	battery = (callback) =>
+	const battery = (callback) =>
 	  new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -10418,7 +10449,9 @@ function requireBattery () {
 	      }
 	    });
 	  });
-	return battery;
+
+	battery_1 = (callback) => battery(util.isFunction(callback) ? callback : null);
+	return battery_1;
 }
 
 var graphics = {};
@@ -10577,6 +10610,7 @@ function requireGraphics () {
 	}
 
 	function graphics$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  function parseLinesDarwin(graphicsArr) {
 	    const res = {
 	      controllers: [],
@@ -11792,6 +11826,7 @@ function requireFilesystem () {
 	// FS - mounted file systems
 
 	function fsSize(drive, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  if (util.isFunction(drive)) {
 	    callback = drive;
 	    drive = '';
@@ -12016,7 +12051,8 @@ function requireFilesystem () {
 	          data = parseDf(lines);
 	          if (drive) {
 	            data = data.filter((item) => {
-	              return item.fs.toLowerCase().indexOf(drive.toLowerCase()) >= 0 || item.mount.toLowerCase().indexOf(drive.toLowerCase()) >= 0;
+	              // non-string drive input matches no drive (same as windows)
+	              return typeof drive === 'string' && (item.fs.toLowerCase().indexOf(drive.toLowerCase()) >= 0 || item.mount.toLowerCase().indexOf(drive.toLowerCase()) >= 0);
 	            });
 	          }
 	          if ((!error || data.length) && stdout.toString().trim() !== '') {
@@ -12098,6 +12134,7 @@ function requireFilesystem () {
 	// FS - open files count
 
 	function fsOpenFiles(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = {
@@ -12469,6 +12506,7 @@ function requireFilesystem () {
 	}
 
 	function blockDevices(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let data = [];
@@ -12648,6 +12686,7 @@ function requireFilesystem () {
 	}
 
 	function fsStats(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (_windows || _freebsd || _openbsd || _netbsd || _sunos) {
@@ -12841,6 +12880,7 @@ function requireFilesystem () {
 	}
 
 	function disksIO(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (_windows) {
@@ -12961,6 +13001,7 @@ function requireFilesystem () {
 	filesystem.disksIO = disksIO;
 
 	function diskLayout(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  function getVendorFromModel(model) {
 	    const diskManufacturers = [
 	      { pattern: 'WESTERN.*', manufacturer: 'Western Digital' },
@@ -14122,6 +14163,7 @@ function requireWifi () {
 	  }
 	}
 	function wifiNetworks(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = [];
@@ -14276,6 +14318,7 @@ function requireWifi () {
 	}
 
 	function wifiConnections(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = [];
@@ -14435,6 +14478,7 @@ function requireWifi () {
 	wifi.wifiConnections = wifiConnections;
 
 	function wifiInterfaces(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = [];
@@ -14646,6 +14690,7 @@ function requireProcesses () {
 	// this function gives an array back, if the services are running.
 
 	function services(srv, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  // fallback - if only callback is given
 	  if (util.isFunction(srv) && !callback) {
 	    callback = srv;
@@ -15095,6 +15140,7 @@ function requireProcesses () {
 	// running processes
 
 	function processes$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  let parsedhead = [];
 
 	  function getName(command) {
@@ -15644,6 +15690,7 @@ function requireProcesses () {
 	// (PID, CPU-Usage %, Mem-Usage %)
 
 	function processLoad(proc, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  // fallback - if only callback is given
 	  if (util.isFunction(proc) && !callback) {
 	    callback = proc;
@@ -16198,6 +16245,7 @@ function requireUsers () {
 	}
 
 	function users$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = [];
@@ -16479,6 +16527,7 @@ function requireInternet () {
 	// check if external site is available
 
 	function inetChecksite(url, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = {
@@ -16564,6 +16613,7 @@ function requireInternet () {
 	// check inet latency
 
 	function inetLatency(host, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  // fallback - if only callback is given
 	  if (util.isFunction(host) && !callback) {
 	    callback = host;
@@ -16875,6 +16925,7 @@ function requireDocker () {
 	// get containers (parameter all: get also inactive/exited containers)
 
 	function dockerInfo(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (!_docker_socket) {
@@ -16941,6 +16992,7 @@ function requireDocker () {
 	docker.dockerInfo = dockerInfo;
 
 	function dockerImages(all, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  // fallback - if only callback is given
 	  if (util.isFunction(all) && !callback) {
 	    callback = all;
@@ -16954,7 +17006,7 @@ function requireDocker () {
 	  }
 
 	  all = all || false;
-	  let result = [];
+	  const result = [];
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (!_docker_socket) {
@@ -17057,6 +17109,7 @@ function requireDocker () {
 	docker.dockerImages = dockerImages;
 
 	function dockerContainers(all, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  function inContainers(containers, id) {
 	    return containers.some((obj) => obj.Id && obj.Id.indexOf(id) === 0);
 	  }
@@ -17074,7 +17127,7 @@ function requireDocker () {
 	  }
 
 	  all = all || false;
-	  let result = [];
+	  const result = [];
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (!_docker_socket) {
@@ -17088,7 +17141,7 @@ function requireDocker () {
 	          docker_containers = data;
 	          if (docker_containers && Object.prototype.toString.call(docker_containers) === '[object Array]' && docker_containers.length > 0) {
 	            // GC in _docker_cpu_last_read
-	            for (let key in _docker_cpu_last_read) {
+	            for (const key in _docker_cpu_last_read) {
 	              if ({}.hasOwnProperty.call(_docker_cpu_last_read, key)) {
 	                if (!inContainers(docker_containers, key)) {
 	                  delete _docker_cpu_last_read[key];
@@ -17241,7 +17294,7 @@ function requireDocker () {
 	function docker_calcNetworkIO(networks) {
 	  let rx = 0;
 	  let wx = 0;
-	  for (let key in networks) {
+	  for (const key in networks) {
 	    // skip loop if the property is from prototype
 	    if (!{}.hasOwnProperty.call(networks, key)) {
 	      continue;
@@ -17263,7 +17316,7 @@ function requireDocker () {
 	}
 
 	function docker_calcBlockIO(blkio_stats) {
-	  let result = {
+	  const result = {
 	    r: 0,
 	    w: 0
 	  };
@@ -17297,6 +17350,7 @@ function requireDocker () {
 	}
 
 	function dockerContainerStats(containerIDs, callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  let containerArray = [];
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
@@ -17343,7 +17397,7 @@ function requireDocker () {
 	      if (containerArray.length && containerArray[0].trim() === '*') {
 	        containerArray = [];
 	        dockerContainers().then((allContainers) => {
-	          for (let container of (allContainers || []).filter(Boolean)) {
+	          for (const container of (allContainers || []).filter(Boolean)) {
 	            if (container.id) {
 	              containerArray.push(container.id.substring(0, 12));
 	            }
@@ -17363,7 +17417,7 @@ function requireDocker () {
 	          }
 	        });
 	      } else {
-	        for (let containerID of containerArray) {
+	        for (const containerID of containerArray) {
 	          workload.push(dockerContainerStatsSingle(containerID.trim()));
 	        }
 	        if (workload.length) {
@@ -17421,7 +17475,7 @@ function requireDocker () {
 	          try {
 	            _docker_socket.getStats(containerID, (data) => {
 	              try {
-	                let stats = data;
+	                const stats = data;
 	                if (!stats.message) {
 	                  if (data.id) {
 	                    result.id = data.id;
@@ -17466,11 +17520,19 @@ function requireDocker () {
 	// container processes (for one container)
 
 	function dockerContainerProcesses(containerID, callback) {
-	  let result = [];
+	  callback = util.isFunction(callback) ? callback : null;
+	  if (util.isFunction(containerID) && !callback) {
+	    callback = containerID;
+	    containerID = '';
+	  }
+	  const result = [];
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      containerID = containerID || '';
 	      if (typeof containerID !== 'string') {
+	        if (callback) {
+	          callback(result);
+	        }
 	        return resolve(result);
 	      }
 	      const containerIdSanitized = util.isPrototypePolluted() ? '' : util.sanitizeContainerID(containerID);
@@ -17488,23 +17550,21 @@ function requireDocker () {
 	           **/
 	          try {
 	            if (data && data.Titles && data.Processes) {
-	              let titles = data.Titles.map(function (value) {
-	                return value.toUpperCase();
-	              });
-	              let pos_pid = titles.indexOf('PID');
-	              let pos_ppid = titles.indexOf('PPID');
-	              let pos_pgid = titles.indexOf('PGID');
-	              let pos_vsz = titles.indexOf('VSZ');
-	              let pos_time = titles.indexOf('TIME');
-	              let pos_elapsed = titles.indexOf('ELAPSED');
-	              let pos_ni = titles.indexOf('NI');
-	              let pos_ruser = titles.indexOf('RUSER');
-	              let pos_user = titles.indexOf('USER');
-	              let pos_rgroup = titles.indexOf('RGROUP');
-	              let pos_group = titles.indexOf('GROUP');
-	              let pos_stat = titles.indexOf('STAT');
-	              let pos_rss = titles.indexOf('RSS');
-	              let pos_command = titles.indexOf('COMMAND');
+	              const titles = data.Titles.map((value) => value.toUpperCase());
+	              const pos_pid = titles.indexOf('PID');
+	              const pos_ppid = titles.indexOf('PPID');
+	              const pos_pgid = titles.indexOf('PGID');
+	              const pos_vsz = titles.indexOf('VSZ');
+	              const pos_time = titles.indexOf('TIME');
+	              const pos_elapsed = titles.indexOf('ELAPSED');
+	              const pos_ni = titles.indexOf('NI');
+	              const pos_ruser = titles.indexOf('RUSER');
+	              const pos_user = titles.indexOf('USER');
+	              const pos_rgroup = titles.indexOf('RGROUP');
+	              const pos_group = titles.indexOf('GROUP');
+	              const pos_stat = titles.indexOf('STAT');
+	              const pos_rss = titles.indexOf('RSS');
+	              const pos_command = titles.indexOf('COMMAND');
 
 	              data.Processes.forEach((process) => {
 	                result.push({
@@ -17546,7 +17606,8 @@ function requireDocker () {
 	docker.dockerContainerProcesses = dockerContainerProcesses;
 
 	function dockerVolumes(callback) {
-	  let result = [];
+	  callback = util.isFunction(callback) ? callback : null;
+	  const result = [];
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      if (!_docker_socket) {
@@ -17592,6 +17653,7 @@ function requireDocker () {
 	docker.dockerVolumes = dockerVolumes;
 
 	function dockerAll(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      dockerContainers(true).then((result) => {
@@ -17600,17 +17662,19 @@ function requireDocker () {
 	          result.forEach((element) => {
 	            dockerContainerStats(element.id).then((res) => {
 	              // include stats in array
-	              element.memUsage = res[0].memUsage;
-	              element.memLimit = res[0].memLimit;
-	              element.memPercent = res[0].memPercent;
-	              element.cpuPercent = res[0].cpuPercent;
-	              element.pids = res[0].pids;
-	              element.netIO = res[0].netIO;
-	              element.blockIO = res[0].blockIO;
-	              element.cpuStats = res[0].cpuStats;
-	              element.precpuStats = res[0].precpuStats;
-	              element.memoryStats = res[0].memoryStats;
-	              element.networks = res[0].networks;
+	              if (res && res[0]) {
+	                element.memUsage = res[0].memUsage;
+	                element.memLimit = res[0].memLimit;
+	                element.memPercent = res[0].memPercent;
+	                element.cpuPercent = res[0].cpuPercent;
+	                element.pids = res[0].pids;
+	                element.netIO = res[0].netIO;
+	                element.blockIO = res[0].blockIO;
+	                element.cpuStats = res[0].cpuStats;
+	                element.precpuStats = res[0].precpuStats;
+	                element.memoryStats = res[0].memoryStats;
+	                element.networks = res[0].networks;
+	              }
 
 	              dockerContainerProcesses(element.id).then((processes) => {
 	                element.processes = processes;
@@ -17667,6 +17731,7 @@ function requireVirtualbox () {
 	const util = requireUtil$8();
 
 	function vboxInfo(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  // fallback - if only callback is given
 	  let result = [];
 	  return new Promise((resolve) => {
@@ -17886,6 +17951,7 @@ function requirePrinter () {
 	}
 
 	function printer$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = [];
@@ -18237,6 +18303,7 @@ function requireUsb () {
 	}
 
 	function usb$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = [];
@@ -18559,6 +18626,7 @@ function requireAudio () {
 	}
 
 	function audio$1(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      const result = [];
@@ -19963,6 +20031,7 @@ function requireBluetooth () {
 	}
 
 	function bluetoothDevices(callback) {
+	  callback = util.isFunction(callback) ? callback : null;
 	  return new Promise((resolve) => {
 	    process.nextTick(() => {
 	      let result = [];
@@ -20197,6 +20266,7 @@ function requireLib () {
 		// get static data - they should not change until restarted
 
 		function getStaticData(callback) {
+		  callback = util.isFunction(callback) ? callback : null;
 		  return new Promise((resolve) => {
 		    process.nextTick(() => {
 		      const data = {};
@@ -20257,6 +20327,7 @@ function requireLib () {
 		// - iface:	define network interface for which you like to monitor network speed e.g. "eth0"
 
 		function getDynamicData(srv, iface, callback) {
+		  callback = util.isFunction(callback) ? callback : null;
 		  if (util.isFunction(iface)) {
 		    callback = iface;
 		    iface = '';
@@ -20272,7 +20343,7 @@ function requireLib () {
 		      srv = srv || '';
 
 		      // use closure to track ƒ completion
-		      let functionProcessed = (() => {
+		      const functionProcessed = (() => {
 		        let totalFunctions = 15;
 		        if (_windows) {
 		          totalFunctions = 13;
@@ -20284,7 +20355,7 @@ function requireLib () {
 		          totalFunctions = 6;
 		        }
 
-		        return function () {
+		        return () => {
 		          if (--totalFunctions === 0) {
 		            if (callback) {
 		              callback(data);
@@ -20412,6 +20483,7 @@ function requireLib () {
 		// - iface:	define network interface for which you like to monitor network speed e.g. "eth0"
 
 		function getAllData(srv, iface, callback) {
+		  callback = util.isFunction(callback) ? callback : null;
 		  return new Promise((resolve) => {
 		    process.nextTick(() => {
 		      let data = {};
@@ -20430,7 +20502,7 @@ function requireLib () {
 		      getStaticData().then((res) => {
 		        data = res;
 		        getDynamicData(srv, iface).then((res) => {
-		          for (let key in res) {
+		          for (const key in res) {
 		            if ({}.hasOwnProperty.call(res, key)) {
 		              data[key] = res[key];
 		            }
@@ -20446,8 +20518,10 @@ function requireLib () {
 		}
 
 		function get(valueObject, callback) {
+		  callback = util.isFunction(callback) ? callback : null;
 		  return new Promise((resolve) => {
 		    process.nextTick(() => {
+		      valueObject = valueObject || {};
 		      const blocked = ['get', 'getStaticData', 'getDynamicData', 'getAllData', 'observe', 'powerShellStart', 'powerShellRelease'];
 		      const isGettable = (key) => ({}).hasOwnProperty.call(exports, key) && typeof exports[key] === 'function' && typeof valueObject[key] === 'string' && blocked.indexOf(key) < 0;
 		      const allPromises = Object.keys(valueObject)
@@ -20456,17 +20530,18 @@ function requireLib () {
 		          const params = valueObject[func].substring(valueObject[func].lastIndexOf('(') + 1, valueObject[func].lastIndexOf(')'));
 		          let funcWithoutParams = func.indexOf(')') >= 0 ? func.split(')')[1].trim() : func;
 		          funcWithoutParams = func.indexOf('|') >= 0 ? func.split('|')[0].trim() : funcWithoutParams;
-		          if (params) {
-		            return exports[funcWithoutParams](params);
-		          } else {
-		            return exports[funcWithoutParams]('');
+		          // a failing function yields an empty result for its key only
+		          try {
+		            return Promise.resolve(exports[funcWithoutParams](params || '')).catch(() => null);
+		          } catch {
+		            return Promise.resolve(null);
 		          }
 		        });
 
 		      Promise.all(allPromises).then((data) => {
 		        const result = {};
 		        let i = 0;
-		        for (let key in valueObject) {
+		        for (const key in valueObject) {
 		          if ({}.hasOwnProperty.call(valueObject, key) && isGettable(key) && data.length > i) {
 		            if (valueObject[key] === '*' || valueObject[key] === 'all') {
 		              result[key] = data[i];
@@ -20546,6 +20621,12 @@ function requireLib () {
 		}
 
 		function observe(valueObject, interval, callback) {
+		  callback = util.isFunction(callback) ? callback : null;
+		  if (!callback) {
+		    return null;
+		  }
+		  // setInterval falls back to 1 ms above this max
+		  interval = Math.min(Math.max(Number(interval) || 0, 500), 2147483647);
 		  let _data = null;
 
 		  const result = setInterval(() => {
