@@ -41,7 +41,7 @@ function getDefaultExportFromCjs (x) {
 
 var lib = {};
 
-var version = "5.33.23";
+var version = "5.33.24";
 var require$$0 = {
 	version: version};
 
@@ -823,6 +823,8 @@ function requireUtil$8 () {
 	        s[i] === "'" ||
 	        s[i] === '`' ||
 	        s[i] === '"' ||
+	        // exec() throws synchronously on NUL bytes
+	        s[i] === '\0' ||
 	        // unicode quotes (U+2018-U+201E) and dashes (U+2013-U+2015) are treated as ' " - by PowerShell
 	        (s[i] >= '‘' && s[i] <= '„') ||
 	        (s[i] >= '–' && s[i] <= '―') ||
